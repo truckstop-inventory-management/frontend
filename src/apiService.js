@@ -1,31 +1,25 @@
 const BASE_URL = 'https://backend-nlxq.onrender.com/api';
 
-// Get token from localStorage
-function getAuthHeaders() {
-  const token = localStorage.getItem('token');
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
+const token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY4OTBiMDZmZTc5MWEyMTg2ODM0MWRkNCIsImlhdCI6MTc1NDMxNzc1MywiZXhwIjoxNzU2OTA5NzUzfQ.EleFp1A4YfWeoDIxpPVHbuXHZxth8TubndHDTC6lNkI";
 
-// Fetch inventory list with auth header
+// Helper function for GET requests
 export async function fetchInventory() {
   const response = await fetch(`${BASE_URL}/inventory`, {
     headers: {
-      'Content-Type': 'application/json',
-      ...getAuthHeaders(),
-    },
+      'Authorization': `Bearer ${token}`
+    }
   });
   if (!response.ok) throw new Error('Failed to fetch inventory');
   return response.json();
 }
 
-// Similarly update create, fetch one, update, delete with auth header
-
+// Helper function for POST requests (create)
 export async function createInventoryItem(itemData) {
   const response = await fetch(`${BASE_URL}/inventory`, {
     method: 'POST',
-    headers: {
+    headers: { 
       'Content-Type': 'application/json',
-      ...getAuthHeaders(),
+      'Authorization': `Bearer ${token}`
     },
     body: JSON.stringify(itemData),
   });
@@ -33,23 +27,24 @@ export async function createInventoryItem(itemData) {
   return response.json();
 }
 
+// Helper function for GET by ID (read one)
 export async function fetchInventoryItem(id) {
   const response = await fetch(`${BASE_URL}/inventory/${id}`, {
     headers: {
-      'Content-Type': 'application/json',
-      ...getAuthHeaders(),
-    },
+      'Authorization': `Bearer ${token}`
+    }
   });
   if (!response.ok) throw new Error('Failed to fetch item');
   return response.json();
 }
 
+// Helper function for PUT requests (update)
 export async function updateInventoryItem(id, updatedData) {
   const response = await fetch(`${BASE_URL}/inventory/${id}`, {
     method: 'PUT',
-    headers: {
+    headers: { 
       'Content-Type': 'application/json',
-      ...getAuthHeaders(),
+      'Authorization': `Bearer ${token}`
     },
     body: JSON.stringify(updatedData),
   });
@@ -57,10 +52,13 @@ export async function updateInventoryItem(id, updatedData) {
   return response.json();
 }
 
+// Helper function for DELETE requests
 export async function deleteInventoryItem(id) {
   const response = await fetch(`${BASE_URL}/inventory/${id}`, {
     method: 'DELETE',
-    headers: getAuthHeaders(),
+    headers: {
+      'Authorization': `Bearer ${token}`
+    }
   });
   if (!response.ok) throw new Error('Failed to delete item');
   return response.json();
