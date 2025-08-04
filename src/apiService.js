@@ -1,28 +1,27 @@
 const BASE_URL = 'https://backend-nlxq.onrender.com/api';
 
-const TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY4OTBiMDZmZTc5MWEyMTg2ODM0MWRkNCIsImlhdCI6MTc1NDMxODc3MiwiZXhwIjoxNzU2OTEwNzcyfQ.-322PVJ-eSpV1dA7BXe6XDeumudlY49bJ1pZqaoCs_4';
-
-function getAuthHeaders() {
+// Helper to create headers with token
+function getAuthHeaders(token) {
   return {
-    'Authorization': `Bearer ${TOKEN}`,
+    'Authorization': `Bearer ${token}`,
     'Content-Type': 'application/json'
   };
 }
 
 // Fetch all inventory items
-export async function fetchInventory() {
+export async function fetchInventory(token) {
   const response = await fetch(`${BASE_URL}/inventory`, {
-    headers: getAuthHeaders()
+    headers: getAuthHeaders(token)
   });
   if (!response.ok) throw new Error('Failed to fetch inventory');
   return response.json();
 }
 
 // Create new inventory item
-export async function createInventoryItem(itemData) {
+export async function createInventoryItem(token, itemData) {
   const response = await fetch(`${BASE_URL}/inventory`, {
     method: 'POST',
-    headers: getAuthHeaders(),
+    headers: getAuthHeaders(token),
     body: JSON.stringify(itemData),
   });
   if (!response.ok) throw new Error('Failed to create inventory item');
@@ -30,19 +29,19 @@ export async function createInventoryItem(itemData) {
 }
 
 // Fetch single inventory item by id
-export async function fetchInventoryItem(id) {
+export async function fetchInventoryItem(token, id) {
   const response = await fetch(`${BASE_URL}/inventory/${id}`, {
-    headers: getAuthHeaders()
+    headers: getAuthHeaders(token)
   });
   if (!response.ok) throw new Error('Failed to fetch item');
   return response.json();
 }
 
 // Update inventory item
-export async function updateInventoryItem(id, updatedData) {
+export async function updateInventoryItem(token, id, updatedData) {
   const response = await fetch(`${BASE_URL}/inventory/${id}`, {
     method: 'PUT',
-    headers: getAuthHeaders(),
+    headers: getAuthHeaders(token),
     body: JSON.stringify(updatedData),
   });
   if (!response.ok) throw new Error('Failed to update item');
@@ -50,10 +49,10 @@ export async function updateInventoryItem(id, updatedData) {
 }
 
 // Delete inventory item
-export async function deleteInventoryItem(id) {
+export async function deleteInventoryItem(token, id) {
   const response = await fetch(`${BASE_URL}/inventory/${id}`, {
     method: 'DELETE',
-    headers: getAuthHeaders()
+    headers: getAuthHeaders(token)
   });
   if (!response.ok) throw new Error('Failed to delete item');
   return response.json();
