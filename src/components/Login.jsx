@@ -28,7 +28,7 @@ export default function Login({ onLoginSuccess }) {
 
       if (onLoginSuccess) onLoginSuccess();
     } catch (err) {
-      setError('Network error');
+      setError('Network error: ' + err.message);
     }
   };
 
