@@ -1,6 +1,6 @@
 const BASE_URL = 'https://backend-nlxq.onrender.com/api';
 
-const TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY4OTBiMDZmZTc5MWEyMTg2ODM0MWRkNCIsImlhdCI6MTc1NDMxNzc1MywiZXhwIjoxNzU2OTA5NzUzfQ.EleFp1A4YfWeoDIxpPVHbuXHZxth8TubndHDTC6lNk';
+const TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY4OTBiMDZmZTc5MWEyMTg2ODM0MWRkNCIsImlhdCI6MTc1NDMxODc3MiwiZXhwIjoxNzU2OTEwNzcyfQ.-322PVJ-eSpV1dA7BXe6XDeumudlY49bJ1pZqaoCs_4';
 
 function getAuthHeaders() {
   return {
