@@ -1,128 +1,138 @@
-import React, { useEffect, useState } from 'react';
-import { fetchInventory, createInventoryItem, deleteInventoryItem, updateInventoryItem } from '../apiService.js';
-import InventoryForm from './InventoryForm.jsx';
+import React, { useEffect, useState } from "react";
+import { initDB, getAllItems, addItem, updateItem, deleteItem, clearInventoryStore } from "../utils/db";
+import axios from 'axios';
 
-export default function InventoryList({ token }) {  // accept token prop
-  const [items, setItems] = useState([]);
-  const [error, setError] = useState(null);
+export default function InventoryList({ token }) {
+  const [inventory, setInventory] = useState([]);
+  const [newItem, setNewItem] = useState({ itemName: '', quantity: '', price: '', location: '' });
+  const [dbReady, setDbReady] = useState(false); // ✅ Track DB readiness
 
-  const [editingId, setEditingId] = useState(null);
-  const [editForm, setEditForm] = useState({
-    itemName: '',
-    quantity: 0,
-    price: 0,
-    location: '',
-  });
-
+  // Initialize DB before anything else
   useEffect(() => {
-    async function loadInventory() {
-      try {
-        const data = await fetchInventory(token);  // pass token here
-        setItems(data);
-      } catch (err) {
-        setError(err.message);
+    const prepareDB = async () => {
+      await initDB();
+      console.log("✅ IndexedDB is ready for use in InventoryList");
+      setDbReady(true);
+    };
+    prepareDB();
+  }, []);
+
+  // Load inventory (sync online or offline)
+  useEffect(() => {
+    if (!dbReady) return; // 🚫 Stop until DB is initialized
+
+    const loadInventory = async () => {
+      if (navigator.onLine) {
+        console.log("🌐 Online: Syncing pending items before API fetch...");
+
+        const dbItems = await getAllItems();
+        const pendingItems = dbItems.filter(item => item.syncStatus === 'pending');
+
+        const syncedIds = new Set(); // ✅ Track recently synced items
+
+        for (const pending of pendingItems) {
+          try {
+            const { itemName, quantity, price, location } = pending;
+            const res = await axios.post(
+              'https://backend-nlxq.onrender.com/api/inventory',
+              { itemName, quantity, price, location },
+              { headers: { Authorization: `Bearer ${token}` } }
+            );
+
+            console.log(`✅ Synced pending item: ${itemName}`);
+
+            if (pending._id !== res.data._id) {
+              await deleteItem(pending._id); // 🔄 Remove temp item
+            }
+
+            await addItem({ ...res.data, syncStatus: 'synced' });
+            syncedIds.add(res.data._id);
+
+          } catch (err) {
+            console.error(`❌ Failed to sync item: ${pending.itemName}`, err.response?.data || err);
+          }
+        }
+
+        const response = await axios.get('https://backend-nlxq.onrender.com/api/inventory', {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const apiItems = response.data;
+
+        await clearInventoryStore();
+
+        for (const item of apiItems) {
+          if (!syncedIds.has(item._id)) {
+            await addItem({ ...item, syncStatus: 'synced' });
+          }
+        }
+
+        setInventory(apiItems);
+        console.log("✅ Inventory updated from API and stored in IndexedDB.");
+      } else {
+        const dbItems = await getAllItems();
+        setInventory(dbItems);
+        console.log("📦 Offline: Loaded from IndexedDB.", dbItems);
       }
-    }
-    if (token) loadInventory();  // only load if token exists
-  }, [token]);
+    };
 
-  const handleAddItem = async (newItem) => {
-    try {
-      const createdItem = await createInventoryItem(token, newItem);  // pass token here
-      setItems(prev => [...prev, createdItem]);
-    } catch (err) {
-      setError(err.message);
-    }
+    loadInventory();
+  }, [token, dbReady]);
+
+  // Handle form input
+  const handleChange = (e) => {
+    setNewItem({ ...newItem, [e.target.name]: e.target.value });
   };
 
-  const handleDeleteItem = async (id) => {
-    try {
-      await deleteInventoryItem(token, id);  // pass token here
-      setItems(prev => prev.filter(item => item._id !== id));
-    } catch (err) {
-      setError(err.message);
-    }
-  };
-
-  const startEditing = (item) => {
-    setEditingId(item._id);
-    setEditForm({
-      itemName: item.itemName,
-      quantity: item.quantity,
-      price: item.price,
-      location: item.location,
+  // Add item to local IndexedDB
+  const handleAddItem = async (e) => {
+    e.preventDefault();
+    const added = await addItem({
+      ...newItem,
+      quantity: parseInt(newItem.quantity, 10),
+      price: parseFloat(newItem.price)
     });
+    console.log('✅ Item added to IndexedDB:', added);
+    setInventory([...inventory, added]);
+    setNewItem({ itemName: '', quantity: '', price: '', location: '' });
   };
 
-  const handleCancelEdit = () => {
-    setEditingId(null);
-    setEditForm({ itemName: '', quantity: 0, price: 0, location: '' });
+  // Update local item
+  const handleUpdate = async (item) => {
+    const updated = await updateItem({ ...item, quantity: item.quantity + 1 });
+    setInventory(inventory.map((inv) => (inv._id === updated._id ? updated : inv)));
   };
 
-  const handleSaveEdit = async (id) => {
-    try {
-      const updatedItem = await updateInventoryItem(token, id, editForm);  // pass token here
-      setItems(prev => prev.map(item => (item._id === id ? updatedItem : item)));
-      handleCancelEdit();
-    } catch (err) {
-      setError(err.message);
-    }
+  // Delete local item
+  const handleDelete = async (id) => {
+    await deleteItem(id);
+    setInventory(inventory.filter((inv) => inv._id !== id));
   };
-
-  if (error) return <div style={{ color: 'red' }}>Error: {error}</div>;
 
   return (
     <div>
-      <h2>Inventory Items</h2>
-      <InventoryForm onAdd={handleAddItem} />
-      <ul>
-        {items.map(item => {
-          const isEditing = editingId === item._id;
-          return (
-            <li key={item._id} style={{ marginBottom: '10px' }}>
-              {isEditing ? (
-                <>
-                  <input
-                    type="text"
-                    value={editForm.itemName}
-                    onChange={e => setEditForm({ ...editForm, itemName: e.target.value })}
-                  />
-                  <input
-                    type="number"
-                    value={editForm.quantity}
-                    onChange={e => setEditForm({ ...editForm, quantity: Number(e.target.value) })}
-                    style={{ width: '60px' }}
-                  />
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={editForm.price}
-                    onChange={e => setEditForm({ ...editForm, price: Number(e.target.value) })}
-                    style={{ width: '80px' }}
-                  />
-                  <input
-                    type="text"
-                    value={editForm.location}
-                    onChange={e => setEditForm({ ...editForm, location: e.target.value })}
-                  />
-                  <button onClick={() => handleSaveEdit(item._id)}>Save</button>
-                  <button onClick={handleCancelEdit}>Cancel</button>
-                </>
-              ) : (
-                <>
-                  {item.itemName} — Qty: {item.quantity} — Price: ${item.price.toFixed(2)} — Location: {item.location}
-                  <button onClick={() => startEditing(item)} style={{ marginLeft: '10px' }}>
-                    Edit
-                  </button>
-                  <button onClick={() => handleDeleteItem(item._id)} style={{ marginLeft: '10px' }}>
-                    Delete
-                  </button>
-                </>
-              )}
+      <h2>Inventory</h2>
+      {inventory.length === 0 ? (
+        <p>No items in inventory. Add your first item below.</p>
+      ) : (
+        <ul>
+          {inventory.map((item) => (
+            <li key={item._id}>
+              {item.itemName} - {item.quantity} @ ${item.price} ({item.location})
+              <button onClick={() => handleUpdate(item)}>Update Qty</button>
+              <button onClick={() => handleDelete(item._id)}>Delete</button>
             </li>
-          );
-        })}
-      </ul>
+          ))}
+        </ul>
+      )}
+
+      <h3>Add New Item</h3>
+      <form onSubmit={handleAddItem}>
+        <input name="itemName" placeholder="Item Name" value={newItem.itemName} onChange={handleChange} required />
+        <input name="quantity" type="number" placeholder="Quantity" value={newItem.quantity} onChange={handleChange} required />
+        <input name="price" type="number" step="0.01" placeholder="Price" value={newItem.price} onChange={handleChange} required />
+        <input name="location" placeholder="Location" value={newItem.location} onChange={handleChange} required />
+        <button type="submit">Add Item</button>
+      </form>
     </div>
   );
 }
