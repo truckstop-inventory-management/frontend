@@ -1,84 +1,155 @@
 import { openDB } from 'idb';
 
-let dbInstance = null; // ✅ Cache DB instance
+let dbInstance = null;
 
-// Initialize DB (singleton pattern)
-export const initDB = async () => {
-  if (dbInstance) return dbInstance; // ✅ Reuse if already open
+// Open the ORIGINAL DB that already has your data
+export async function initDB() {
+  if (dbInstance) return dbInstance;
 
-  dbInstance = await openDB('truckstop-inventory-db', 1, {
-    upgrade(db) {
+  dbInstance = await openDB('truckstop-inventory-db', 2, {
+    upgrade(db, _oldVersion, _newVersion, tx) {
       if (!db.objectStoreNames.contains('inventory')) {
         const store = db.createObjectStore('inventory', { keyPath: '_id' });
         store.createIndex('lastUpdated', 'lastUpdated');
         store.createIndex('syncStatus', 'syncStatus');
+        store.createIndex('isDeleted', 'isDeleted');
+      } else {
+        // Ensure indexes exist after version bumps
+        const store = tx.objectStore('inventory');
+        if (!store.indexNames.contains('isDeleted')) {
+          store.createIndex('isDeleted', 'isDeleted');
+        }
+        if (!store.indexNames.contains('syncStatus')) {
+          store.createIndex('syncStatus', 'syncStatus');
+        }
+        if (!store.indexNames.contains('lastUpdated')) {
+          store.createIndex('lastUpdated', 'lastUpdated');
+        }
       }
-    }
+    },
   });
 
-  console.log("✅ IndexedDB initialized in db.js");
+  console.log('✅ IndexedDB initialized (truckstop-inventory-db)');
   return dbInstance;
-};
+}
 
-// Clear inventory store safely
-export async function clearInventoryStore() {
+// Raw read
+export async function getAllItems() {
   const db = await initDB();
-  if (db.objectStoreNames.contains('inventory')) {
-    await db.clear('inventory');
-    console.log("🗑️ Cleared IndexedDB inventory store");
-  } else {
-    console.warn("⚠️ Tried to clear 'inventory' store, but it doesn't exist yet.");
+  return db.getAll('inventory');
+}
+
+// Only active (not tombstoned)
+export async function getActiveItems() {
+  const db = await initDB();
+  const all = await db.getAll('inventory');
+  return all.filter((item) => !item.isDeleted);
+}
+
+// Pending non-deleted items
+export async function getPendingItems() {
+  const db = await initDB();
+  const all = await db.getAll('inventory');
+  return all.filter((item) => item.syncStatus === 'pending' && !item.isDeleted);
+}
+
+// Tombstones awaiting server delete
+export async function getPendingDeletedItems() {
+  const db = await initDB();
+  const all = await db.getAll('inventory');
+  return all.filter((item) => item.isDeleted && item.syncStatus === 'pending');
+}
+
+// Insert or no-op if exists
+export async function addItem(item) {
+  const db = await initDB();
+  const existing = await db.get('inventory', item._id);
+  if (existing) {
+    console.warn(`⚠️ Item with ID ${item._id} already exists. Skipping insert.`);
+    return existing;
+  }
+  const toPut = {
+    ...item,
+    isDeleted: item.isDeleted ?? false,
+    syncStatus: item.syncStatus ?? 'synced',
+    lastUpdated: item.lastUpdated ?? new Date().toISOString(),
+    conflictServer: item.conflictServer ?? null,
+  };
+  await db.put('inventory', toPut);
+  console.log(`[IDB] addItem -> _id=${toPut._id}`);
+  return toPut;
+}
+
+// Upsert with guaranteed lastUpdated
+export async function updateItem(item) {
+  const db = await initDB();
+  const toPut = {
+    ...item,
+    lastUpdated: item.lastUpdated ?? new Date().toISOString(),
+  };
+  await db.put('inventory', toPut);
+  console.log(
+    `[IDB] updateItem -> _id=${toPut._id}, syncStatus=${toPut.syncStatus}, isDeleted=${toPut.isDeleted}`
+  );
+  return toPut;
+}
+
+// Tombstone local delete
+export async function markItemDeleted(id) {
+  const db = await initDB();
+  const tx = db.transaction('inventory', 'readwrite');
+  const store = tx.objectStore('inventory');
+  const existing = await store.get(id);
+  if (!existing) {
+    console.warn(`[IDB] markItemDeleted -> no item found for _id=${id}`);
+    await tx.done;
+    return;
+  }
+  const next = {
+    ...existing,
+    isDeleted: true,
+    syncStatus: 'pending',
+    lastUpdated: new Date().toISOString(),
+  };
+  await store.put(next);
+  await tx.done;
+  console.log(`[IDB] markItemDeleted -> _id=${id} (tombstoned)`);
+  return next;
+}
+
+// Hard delete (utility)
+export async function deleteItem(id) {
+  const db = await initDB();
+  await db.delete('inventory', id);
+  console.log(`[IDB] deleteItem -> _id=${id}`);
+}
+
+// Purge tombstones that are now synced
+export async function purgeDeletedSynced() {
+  const db = await initDB();
+  const all = await db.getAll('inventory');
+  const deletable = all.filter((it) => it.isDeleted && it.syncStatus === 'synced');
+  for (const it of deletable) {
+    await db.delete('inventory', it._id);
+    console.log(`[IDB] purge tombstone -> _id=${it._id}`);
   }
 }
 
-// Add new item (with unique temp ID if offline)
-export const addItem = async (item) => {
+// Record a 409 conflict with server copy snapshot
+export async function markConflict(id, serverCopy) {
   const db = await initDB();
-
-  // Generate or use _id
-  const itemId = item._id || `temp-${crypto.randomUUID()}`;
-
-  // Defensive: avoid get() call if no ID
-  if (!itemId) {
-    console.error('❌ Cannot add item without a valid _id');
-    return null;
+  const tx = db.transaction('inventory', 'readwrite');
+  const store = tx.objectStore('inventory');
+  const existing = await store.get(id);
+  if (!existing) {
+    await tx.done;
+    return;
   }
-
-  // Check if item with same ID exists
-  const existing = await db.get('inventory', itemId);
-  if (existing) {
-    console.log(`⚠️ Item with ID ${itemId} already exists. Skipping insert.`);
-    return existing; // Prevent duplicate
-  }
-
-  const newItem = {
-    ...item,
-    _id: itemId,
-    syncStatus: item.syncStatus || 'pending',
-    lastUpdated: new Date().toISOString(),
-  };
-
-  await db.put('inventory', newItem);
-  return newItem;
-};
-
-// Fetch all items
-export const getAllItems = async () => {
-  const db = await initDB();
-  return db.getAll('inventory');
-};
-
-// Update item (marks as pending for sync)
-export const updateItem = async (item) => {
-  const db = await initDB();
-  item.lastUpdated = new Date().toISOString();
-  item.syncStatus = 'pending';
-  await db.put('inventory', item);
-  return item;
-};
-
-// Delete item by ID
-export const deleteItem = async (id) => {
-  const db = await initDB();
-  await db.delete('inventory', id);
-};
+  await store.put({
+    ...existing,
+    syncStatus: 'conflict',
+    conflictServer: serverCopy,
+  });
+  await tx.done;
+  console.log(`[IDB] markConflict -> _id=${id} set to conflict`);
+}

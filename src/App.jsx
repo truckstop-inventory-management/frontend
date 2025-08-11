@@ -3,8 +3,10 @@ import { initDB } from './utils/db';
 import LoginForm from './components/LoginForm.jsx';
 import RegisterForm from './components/RegisterForm.jsx';
 import InventoryList from './components/InventoryList.jsx';
+import OfflineBanner from './components/OfflineBanner.jsx';
 
 export default function App() {
+
   const [token, setToken] = useState(null);
   const [dbReady, setDbReady] = useState(false);
 
@@ -36,8 +38,32 @@ export default function App() {
   }
 
   return (
-    <div>
-      <LoginForm onLogin={(jwtToken) => { setToken(jwtToken); localStorage.setItem('token', jwtToken); }} />
-    </div>
+    <>
+      {/* 🔹 Always show the offline/online status banner */}
+      <OfflineBanner token = {token}/>
+
+      {token ? (
+        <div style={{ paddingTop: 48 }}>
+          <button
+            onClick={() => {
+              setToken(null);
+              localStorage.removeItem('token');
+            }}
+          >
+            Logout
+          </button>
+          <InventoryList token={token} dbReady={dbReady} />
+        </div>
+      ) : (
+        <div style={{ paddingTop: 48 }}>
+          <LoginForm
+            onLogin={(jwtToken) => {
+              setToken(jwtToken);
+              localStorage.setItem('token', jwtToken);
+            }}
+          />
+        </div>
+      )}
+    </>
   );
 }
