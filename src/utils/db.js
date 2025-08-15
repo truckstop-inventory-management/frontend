@@ -1,3 +1,4 @@
+// src/utils/db.js
 import { openDB } from 'idb';
 
 let dbInstance = null;
@@ -61,23 +62,33 @@ export async function getPendingDeletedItems() {
 }
 
 // Insert or no-op if exists
-export async function addItem(item) {
+export async function addItem(raw) {
   const db = await initDB();
-  const existing = await db.get('inventory', item._id);
-  if (existing) {
-    console.warn(`⚠️ Item with ID ${item._id} already exists. Skipping insert.`);
-    return existing;
-  }
-  const toPut = {
-    ...item,
-    isDeleted: item.isDeleted ?? false,
-    syncStatus: item.syncStatus ?? 'synced',
-    lastUpdated: item.lastUpdated ?? new Date().toISOString(),
-    conflictServer: item.conflictServer ?? null,
+  const tx = db.transaction('inventory', 'readwrite');
+  const store = tx.objectStore('inventory');
+
+  const _id = raw?._id || `local_${crypto.randomUUID()}`;
+  const quantity = Number.isFinite(Number(raw?.quantity)) ? Number(raw.quantity) : 0;
+  const price = Number.isFinite(Number(raw?.price)) ? Number(raw.price) : 0;
+
+  const doc = {
+    _id,
+    itemName: String(raw?.itemName || '').trim(),
+    quantity,
+    price,
+    location: String(raw?.location || '').trim(),
+    // 🔽 preserve if provided, else default
+    isDeleted: typeof raw?.isDeleted === 'boolean' ? raw.isDeleted : false,
+    syncStatus: raw?.syncStatus || 'pending',
+    conflictServer: raw?.conflictServer ?? null,
+    lastUpdated: raw?.lastUpdated
+      ? new Date(raw.lastUpdated).toISOString()
+      : new Date().toISOString(),
   };
-  await db.put('inventory', toPut);
-  console.log(`[IDB] addItem -> _id=${toPut._id}`);
-  return toPut;
+
+  await store.put(doc);
+  await tx.done;
+  return doc;
 }
 
 // Upsert with guaranteed lastUpdated
@@ -152,4 +163,36 @@ export async function markConflict(id, serverCopy) {
   });
   await tx.done;
   console.log(`[IDB] markConflict -> _id=${id} set to conflict`);
+}
+
+/**
+ * Remap a temporary local id (e.g., "local_...") to the server ObjectId atomically.
+ * Prevents duplicate rows during create/upsert flows.
+ */
+export async function remapLocalId(oldId, newId, serverDoc = {}) {
+  const db = await initDB();
+  const tx = db.transaction('inventory', 'readwrite');
+  const store = tx.objectStore('inventory');
+
+  const existing = await store.get(oldId);
+  if (!existing) {
+    await tx.done;
+    return null;
+  }
+
+  const next = {
+    ...existing,
+    ...serverDoc,           // prefer any fields returned by server
+    _id: newId,             // swap to server ObjectId
+    syncStatus: 'synced',
+    conflictServer: null,
+    lastUpdated: new Date().toISOString(),
+  };
+
+  await store.delete(oldId); // remove the temp-keyed record
+  await store.put(next);     // write with the real server _id
+  await tx.done;
+
+  console.log(`[IDB] remapLocalId -> ${oldId} ➝ ${newId}`);
+  return next;
 }

@@ -1,17 +1,20 @@
-// utils/sync.js
 import axios from 'axios';
 import {
   initDB,
   getAllItems,
   getPendingDeletedItems,
-  addItem,
+  // addItem,
   updateItem,
-  deleteItem,
+  // deleteItem,
   purgeDeletedSynced,
   markConflict,
+  remapLocalId, // NEW: atomic swap of local_ → server ObjectId
 } from './db';
 
 const API_BASE = 'https://backend-nlxq.onrender.com/api/inventory';
+
+// Detect client-temp ids created offline
+const isTempId = (id) => /^temp-|^local_/i.test(String(id || ''));
 
 // Ping the backend with a short timeout
 async function backendReachable(headers) {
@@ -31,7 +34,9 @@ function toPayload(local) {
     quantity,
     price,
     location,
-    lastUpdated: lastUpdated ? new Date(lastUpdated).toISOString() : new Date().toISOString(),
+    lastUpdated: lastUpdated
+      ? new Date(lastUpdated).toISOString()
+      : new Date().toISOString(),
   };
 }
 
@@ -62,12 +67,16 @@ export async function runFullSync(token) {
       console.error('❌ Initial pull failed', err?.response?.data || err);
       // We can still continue with pushes
     }
-    const serverIdSet = new Set(serverItems.map(it => it._id));
+    const serverIdSet = new Set(serverItems.map((it) => it._id));
 
     // Any local active item that is "synced" but missing on server -> mark pending
     let all = await getAllItems();
     for (const local of all) {
-      if (!local.isDeleted && local.syncStatus === 'synced' && !serverIdSet.has(local._id)) {
+      if (
+        !local.isDeleted &&
+        local.syncStatus === 'synced' &&
+        !serverIdSet.has(local._id)
+      ) {
         await updateItem({ ...local, syncStatus: 'pending' });
       }
     }
@@ -76,49 +85,61 @@ export async function runFullSync(token) {
     all = await getAllItems();
 
     // ===== Phase 1: Push creates/updates (pending & not deleted) =====
-    const pendings = all.filter(it => it.syncStatus === 'pending' && !it.isDeleted);
+    const pendings = all.filter(
+      (it) => it.syncStatus === 'pending' && !it.isDeleted
+    );
+
     for (const local of pendings) {
       const payload = toPayload(local);
-      const isTemp = String(local._id || '').startsWith('temp-');
+      const temp = isTempId(local._id); // uses both "temp-" and "local_"
 
       try {
-        if (isTemp) {
-          // Create on server
+        if (temp) {
+          // CREATE on server → remap local id to server ObjectId (atomic, no duplicates)
           const res = await axios.post(API_BASE, payload, { headers });
           const serverItem = res.data;
-
-          // Replace temp with server version
-          await deleteItem(local._id);
-          await addItem({ ...serverItem, isDeleted: false, syncStatus: 'synced', conflictServer: null });
-          console.log(`✅ Created on server & replaced temp id: ${local._id} → ${serverItem._id}`);
+          await remapLocalId(local._id, serverItem._id, serverItem);
+          console.log(
+            `✅ Created on server & remapped id: ${local._id} → ${serverItem._id}`
+          );
         } else {
-          // Update existing on server (LWW)
+          // UPDATE on server (LWW)
           try {
             await axios.put(`${API_BASE}/${local._id}`, payload, { headers });
             // Server accepted -> mark synced
-            await updateItem({ ...local, syncStatus: 'synced', conflictServer: null });
+            await updateItem({
+              ...local,
+              syncStatus: 'synced',
+              conflictServer: null,
+            });
             console.log(`✅ Updated on server: ${local._id}`);
           } catch (e) {
             const status = e?.response?.status;
             if (status === 404) {
-              // Server doesn't have this id anymore -> POST then swap local id
+              // Server doesn't have this id anymore -> POST then remap id
               const res = await axios.post(API_BASE, payload, { headers });
               const serverItem = res.data;
-              await deleteItem(local._id);
-              await addItem({ ...serverItem, isDeleted: false, syncStatus: 'synced', conflictServer: null });
-              console.log(`↩️ Upserted missing item via POST and replaced id: ${local._id} → ${serverItem._id}`);
+              await remapLocalId(local._id, serverItem._id, serverItem);
+              console.log(
+                `↩️ Upserted via POST and remapped id: ${local._id} → ${serverItem._id}`
+              );
             } else if (status === 409 && e?.response?.data?.server) {
               // Conflict -> store server copy + mark conflict
               const serverCopy = e.response.data.server;
               await markConflict(local._id, serverCopy);
-              console.warn(`⚠️ Conflict on ${local._id} — marked 'conflict' with server copy.`);
+              console.warn(
+                `⚠️ Conflict on ${local._id} — marked 'conflict' with server copy.`
+              );
             } else {
               throw e;
             }
           }
         }
       } catch (err) {
-        console.error(`❌ Failed to push create/update for ${local._id}`, err?.response?.data || err);
+        console.error(
+          `❌ Failed to push create/update for ${local._id}`,
+          err?.response?.data || err
+        );
       }
     }
 
@@ -134,23 +155,27 @@ export async function runFullSync(token) {
       console.log(`🗑️ Deleted on server (tombstone synced): ${local._id}`);
     }
 
-    // ===== Phase 3: Pull server items and upsert (avoid overwriting pending/conflict) =====
+    // ===== Phase 3: Pull server items and upsert
+    // Avoid overwriting local 'pending' or 'conflict' docs.
     try {
       const res = await axios.get(API_BASE, { headers });
       const latestServerItems = res.data || [];
       // Refresh 'all' to see current local states
-      all = await getAllItems();
+      let all = await getAllItems();
 
       for (const item of latestServerItems) {
-        const existing = all.find(x => x._id === item._id);
+        const existing = all.find((x) => x._id === item._id);
         if (existing && (existing.syncStatus === 'pending' || existing.syncStatus === 'conflict')) {
-          // Skip overwrite; user needs to resolve or we’ll push later
+          // Skip overwrite; user edits or conflict resolution will push later
           continue;
         }
-        const maybeExisting = await addItem({ ...item, isDeleted: false, syncStatus: 'synced', conflictServer: null });
-        if (maybeExisting._id === item._id && !['pending', 'conflict'].includes(maybeExisting.syncStatus)) {
-          await updateItem({ ...item, isDeleted: false, syncStatus: 'synced', conflictServer: null });
-        }
+        // Single write with the final truth: 'synced'
+        await updateItem({
+          ...item,
+          isDeleted: false,
+          syncStatus: 'synced',
+          conflictServer: null,
+        });
       }
     } catch (err) {
       console.error('❌ Failed to pull server items', err?.response?.data || err);
@@ -160,7 +185,10 @@ export async function runFullSync(token) {
     try {
       await purgeDeletedSynced();
     } catch (err) {
-      console.warn('⚠️ Purge of synced tombstones failed (non-critical)', err);
+      console.warn(
+        '⚠️ Purge of synced tombstones failed (non-critical)',
+        err
+      );
     }
 
     console.log('✅ Full sync completed.');

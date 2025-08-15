@@ -1,3 +1,4 @@
+// src/components/InventoryList.jsx
 import React, { useEffect, useState, useMemo } from "react";
 import {
   initDB,
@@ -8,8 +9,9 @@ import {
 } from "../utils/db";
 import { runFullSync } from "../utils/sync";
 import SyncStatusPill from "./SyncStatusPill.jsx";
+import { normalizeLocation, LOCATION } from "../utils/location";
 
-export default function InventoryList({ token }) {
+export default function InventoryList({ token, dbReady, locationFilter, onCountsChange }) {
   const [inventory, setInventory] = useState([]);
   const [newItem, setNewItem] = useState({
     itemName: "",
@@ -17,7 +19,6 @@ export default function InventoryList({ token }) {
     price: "",
     location: "",
   });
-  const [dbReady, setDbReady] = useState(false);
 
   // Editing state
   const [editingId, setEditingId] = useState(null);
@@ -32,7 +33,6 @@ export default function InventoryList({ token }) {
     const prepareDB = async () => {
       await initDB();
       console.log("✅ IndexedDB is ready for use in InventoryList");
-      setDbReady(true);
     };
     prepareDB();
   }, []);
@@ -81,7 +81,6 @@ export default function InventoryList({ token }) {
       quantity: Number.isFinite(qty) ? qty : 0,
       price: Number.isFinite(price) ? price : 0,
       isDeleted: false,
-      // lastUpdated optional here; sync will default to now if absent
     });
     console.log("✅ Item added to IndexedDB:", added);
     await refreshLocalActive();
@@ -137,7 +136,6 @@ export default function InventoryList({ token }) {
     }));
   }
 
-  // --- Guardrails: validity + dirtiness ---
   const currentEditingItem = useMemo(
     () => inventory.find((x) => x._id === editingId) || null,
     [inventory, editingId]
@@ -162,7 +160,6 @@ export default function InventoryList({ token }) {
       String(currentEditingItem.location ?? "") !== String(editDraft.location ?? "")
     );
   }, [currentEditingItem, editDraft]);
-  // ----------------------------------------
 
   async function saveEdit(item) {
     if (!draftIsValid || !draftIsDirty) return;
@@ -180,7 +177,7 @@ export default function InventoryList({ token }) {
       ...item,
       ...safeDraft,
       syncStatus: "pending",
-      lastUpdated: new Date().toISOString(), // ensure LWW timestamp advances
+      lastUpdated: new Date().toISOString(),
       conflictServer: null,
     };
     console.log("💾 Saving edit payload:", payload);
@@ -202,9 +199,7 @@ export default function InventoryList({ token }) {
     cancelEdit();
   }
 
-  // ===== Conflict resolution helpers =====
   async function resolveKeepLocal(item) {
-    // Keep local values; just bump timestamp and re-mark pending
     const payload = {
       ...item,
       syncStatus: "pending",
@@ -244,22 +239,56 @@ export default function InventoryList({ token }) {
       }
     }
   }
-  // ======================================
 
+  // ===== Counts & filtering =====
+  const counts = useMemo(() => {
+    const base = {
+      [LOCATION.C_STORE]: 0,
+      [LOCATION.RESTAURANT]: 0,
+    };
+    if (!Array.isArray(inventory)) return base;
+    for (const it of inventory) {
+      const loc = normalizeLocation(it?.location);
+      if (loc === LOCATION.C_STORE) base[LOCATION.C_STORE] += 1;
+      else if (loc === LOCATION.RESTAURANT) base[LOCATION.RESTAURANT] += 1;
+    }
+    return base;
+  }, [inventory]);
+
+  useEffect(() => {
+    if (typeof onCountsChange === "function") {
+      onCountsChange(counts);
+    }
+  }, [counts, onCountsChange]);
+
+  const displayItems = useMemo(() => {
+    if (!Array.isArray(inventory)) return [];
+    if (!locationFilter) return inventory;
+    const target = normalizeLocation(locationFilter);
+    return inventory.filter((it) => normalizeLocation(it?.location) === target);
+  }, [inventory, locationFilter]);
+
+  // ===== RENDER =====
   return (
-    <div>
+    <div style={{ padding: 16 }}>
       <h2>Inventory</h2>
-      {inventory.length === 0 ? (
-        <p>No items in inventory. Add your first item below.</p>
+
+      {displayItems.length === 0 ? (
+        <div style={{ opacity: 0.85, padding: '12px 0' }}>
+          {locationFilter ? (
+            <>No items found for <b>{locationFilter}</b>. Add your first item below.</>
+          ) : (
+            <>No items in inventory yet. Add your first item below.</>
+          )}
+        </div>
       ) : (
         <ul>
-          {inventory.map((item) => (
-            <li key={item._id}>
+          {displayItems.map((item) => (
+            <li key={item._id} style={{ borderBottom: '1px solid #eee', padding: '8px 0' }}>
               {editingId === item._id ? (
                 <div>
                   <SyncStatusPill status={item.syncStatus} />
 
-                  {/* If in conflict while editing, show quick compare */}
                   {item.syncStatus === "conflict" && item.conflictServer && (
                     <div style={{ margin: "6px 0", padding: "6px 8px", border: "1px dashed #f59e0b" }}>
                       <strong>Conflict:</strong> Server has different values.
@@ -320,10 +349,7 @@ export default function InventoryList({ token }) {
               ) : (
                 <div>
                   <SyncStatusPill status={item.syncStatus} />
-
                   {item.itemName} - {item.quantity} @ ${item.price} ({item.location})
-
-                  {/* Conflict resolver (view mode) */}
                   {item.syncStatus === "conflict" && item.conflictServer && (
                     <div style={{ marginTop: 6 }}>
                       <div style={{ fontSize: 12, marginBottom: 4 }}>
@@ -334,8 +360,6 @@ export default function InventoryList({ token }) {
                       <button onClick={() => startEdit(item)}>Review & Edit</button>
                     </div>
                   )}
-
-                  {/* Normal actions */}
                   {item.syncStatus !== "conflict" && (
                     <>
                       {" "}
