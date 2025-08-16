@@ -1,198 +1,126 @@
-import axios from 'axios';
+import axios from "axios";
 import {
-  initDB,
   getAllItems,
-  getPendingDeletedItems,
-  // addItem,
   updateItem,
-  // deleteItem,
-  purgeDeletedSynced,
+  deleteItem,
+  remapLocalId,
   markConflict,
-  remapLocalId, // NEW: atomic swap of local_ → server ObjectId
-} from './db';
+} from "./db";
 
-const API_BASE = 'https://backend-nlxq.onrender.com/api/inventory';
+const API_URL =
+  import.meta.env.VITE_BACKEND_URL || "https://backend-nlxq.onrender.com/api";
 
-// Detect client-temp ids created offline
-const isTempId = (id) => /^temp-|^local_/i.test(String(id || ''));
-
-// Ping the backend with a short timeout
-async function backendReachable(headers) {
-  try {
-    await axios.get(API_BASE, { headers, timeout: 2000 });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// Include lastUpdated for LWW
-function toPayload(local) {
-  const { itemName, quantity, price, location, lastUpdated } = local;
-  return {
-    itemName,
-    quantity,
-    price,
-    location,
-    lastUpdated: lastUpdated
-      ? new Date(lastUpdated).toISOString()
-      : new Date().toISOString(),
-  };
-}
-
+// === Full sync ===
 export async function runFullSync(token) {
-  try {
-    await initDB();
+  if (!token) throw new Error("Missing auth token for sync");
 
-    if (!token) {
-      console.warn('⚠️ No token — skipping sync.');
-      return;
-    }
+  console.log("🔄 Running full sync with backend…");
 
-    const headers = { Authorization: `Bearer ${token}` };
+  // Phase 1: Push local pending changes
+  const all = await getAllItems();
+  const pendings = all.filter(
+    (it) => it.syncStatus === "pending" || it.syncStatus === "conflict"
+  );
+  console.log(`📤 Found ${pendings.length} local changes to push`);
 
-    // ✅ Hard gate on real reachability
-    const ok = await backendReachable(headers);
-    if (!ok) {
-      console.log('⏭️ Backend not reachable — skipping sync.');
-      return;
-    }
-
-    // ===== Phase 0: Pull server IDs to detect "missing on server" =====
-    let serverItems = [];
+  for (const local of pendings) {
     try {
-      const res = await axios.get(API_BASE, { headers });
-      serverItems = res.data || [];
-    } catch (err) {
-      console.error('❌ Initial pull failed', err?.response?.data || err);
-      // We can still continue with pushes
-    }
-    const serverIdSet = new Set(serverItems.map((it) => it._id));
-
-    // Any local active item that is "synced" but missing on server -> mark pending
-    let all = await getAllItems();
-    for (const local of all) {
-      if (
-        !local.isDeleted &&
-        local.syncStatus === 'synced' &&
-        !serverIdSet.has(local._id)
-      ) {
-        await updateItem({ ...local, syncStatus: 'pending' });
-      }
-    }
-
-    // Re-read all after potential re-marking
-    all = await getAllItems();
-
-    // ===== Phase 1: Push creates/updates (pending & not deleted) =====
-    const pendings = all.filter(
-      (it) => it.syncStatus === 'pending' && !it.isDeleted
-    );
-
-    for (const local of pendings) {
-      const payload = toPayload(local);
-      const temp = isTempId(local._id); // uses both "temp-" and "local_"
-
-      try {
-        if (temp) {
-          // CREATE on server → remap local id to server ObjectId (atomic, no duplicates)
-          const res = await axios.post(API_BASE, payload, { headers });
-          const serverItem = res.data;
-          await remapLocalId(local._id, serverItem._id, serverItem);
-          console.log(
-            `✅ Created on server & remapped id: ${local._id} → ${serverItem._id}`
-          );
-        } else {
-          // UPDATE on server (LWW)
-          try {
-            await axios.put(`${API_BASE}/${local._id}`, payload, { headers });
-            // Server accepted -> mark synced
-            await updateItem({
-              ...local,
-              syncStatus: 'synced',
-              conflictServer: null,
-            });
-            console.log(`✅ Updated on server: ${local._id}`);
-          } catch (e) {
-            const status = e?.response?.status;
-            if (status === 404) {
-              // Server doesn't have this id anymore -> POST then remap id
-              const res = await axios.post(API_BASE, payload, { headers });
-              const serverItem = res.data;
-              await remapLocalId(local._id, serverItem._id, serverItem);
-              console.log(
-                `↩️ Upserted via POST and remapped id: ${local._id} → ${serverItem._id}`
-              );
-            } else if (status === 409 && e?.response?.data?.server) {
-              // Conflict -> store server copy + mark conflict
-              const serverCopy = e.response.data.server;
-              await markConflict(local._id, serverCopy);
-              console.warn(
-                `⚠️ Conflict on ${local._id} — marked 'conflict' with server copy.`
-              );
-            } else {
-              throw e;
-            }
-          }
-        }
-      } catch (err) {
-        console.error(
-          `❌ Failed to push create/update for ${local._id}`,
-          err?.response?.data || err
-        );
-      }
-    }
-
-    // ===== Phase 2: Push deletes (tombstones) =====
-    const tombstones = await getPendingDeletedItems();
-    for (const local of tombstones) {
-      try {
-        await axios.delete(`${API_BASE}/${local._id}`, { headers });
-      } catch (e) {
-        if (e?.response?.status !== 404) throw e; // 404 means already gone
-      }
-      await updateItem({ ...local, syncStatus: 'synced' });
-      console.log(`🗑️ Deleted on server (tombstone synced): ${local._id}`);
-    }
-
-    // ===== Phase 3: Pull server items and upsert
-    // Avoid overwriting local 'pending' or 'conflict' docs.
-    try {
-      const res = await axios.get(API_BASE, { headers });
-      const latestServerItems = res.data || [];
-      // Refresh 'all' to see current local states
-      let all = await getAllItems();
-
-      for (const item of latestServerItems) {
-        const existing = all.find((x) => x._id === item._id);
-        if (existing && (existing.syncStatus === 'pending' || existing.syncStatus === 'conflict')) {
-          // Skip overwrite; user edits or conflict resolution will push later
+      if (local.isDeleted) {
+        if (local._id.startsWith("local-")) {
+          await deleteItem(local._id);
+          console.log(`🗑️ Deleted unsynced local item ${local._id}`);
           continue;
         }
-        // Single write with the final truth: 'synced'
-        await updateItem({
-          ...item,
-          isDeleted: false,
-          syncStatus: 'synced',
-          conflictServer: null,
+        const resp = await axios.delete(`${API_URL}/inventory/${local._id}`, {
+          headers: { Authorization: `Bearer ${token}` },
         });
+        if (resp.status === 200) {
+          await deleteItem(local._id);
+          console.log(`🗑️ Deleted remote + local item ${local._id}`);
+        }
+      } else if (local._id.startsWith("local-")) {
+        // Create new server record
+        const { _id, ...rest } = local;
+        const resp = await axios.post(`${API_URL}/inventory`, rest, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (resp.status === 201) {
+          const serverCopy = resp.data;
+          await remapLocalId(local._id, {
+            ...serverCopy,
+            syncStatus: "synced",
+            conflictServer: null,
+          });
+          console.log(`✅ Created server item for ${local._id} → ${serverCopy._id}`);
+        }
+      } else {
+        // Update server record
+        const resp = await axios.put(
+          `${API_URL}/inventory/${local._id}`,
+          local,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (resp.status === 200) {
+          const serverCopy = resp.data;
+          await updateItem({
+            ...serverCopy,
+            syncStatus: "synced",
+            conflictServer: null,
+          });
+          console.log(`✅ Updated server item ${local._id}`);
+        }
       }
-    } catch (err) {
-      console.error('❌ Failed to pull server items', err?.response?.data || err);
+    } catch (e) {
+      const status = e?.response?.status;
+      if (status === 409 && e?.response?.data?.server) {
+        const serverCopy = e.response.data.server;
+        await markConflict(local._id, serverCopy);
+        console.warn(
+          `⚠️ Conflict on ${local._id} — marked 'conflict' with server copy.`
+        );
+      } else {
+        console.error(`❌ Sync push failed for ${local._id}:`, e.message);
+      }
     }
-
-    // ===== Phase 4: Purge synced tombstones =====
-    try {
-      await purgeDeletedSynced();
-    } catch (err) {
-      console.warn(
-        '⚠️ Purge of synced tombstones failed (non-critical)',
-        err
-      );
-    }
-
-    console.log('✅ Full sync completed.');
-  } catch (err) {
-    console.error('❌ Sync failed (non-fatal):', err?.response?.data || err);
   }
+
+  // Phase 2: Fetch latest server copy
+  let latestServerItems = [];
+  try {
+    const resp = await axios.get(`${API_URL}/inventory`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    latestServerItems = resp.data || [];
+    console.log(`📥 Pulled ${latestServerItems.length} items from server`);
+  } catch (e) {
+    console.error("❌ Failed to pull server items:", e.message);
+  }
+
+  // Phase 3: Merge server → local
+  for (const item of latestServerItems) {
+    const existing = all.find((x) => x._id === item._id);
+
+    // ✅ Do not overwrite conflict or pending items
+    if (existing && existing.syncStatus === "conflict") {
+      console.log(
+        `⏭️ Skipping server overwrite for ${item._id} (local is in conflict)`
+      );
+      continue;
+    }
+    if (existing && existing.syncStatus === "pending") {
+      console.log(
+        `⏭️ Skipping server overwrite for ${item._id} (local is pending)`
+      );
+      continue;
+    }
+
+    await updateItem({
+      ...item,
+      isDeleted: false,
+      syncStatus: "synced",
+      conflictServer: null,
+    });
+  }
+
+  console.log("✅ Sync completed");
 }
