@@ -1,97 +1,88 @@
-import { getAllItems, updateItem } from "./db.js";
-console.log("🔧 VITE_BACKEND_URL =", import.meta.env.VITE_BACKEND_URL);
-export async function runFullSync(token) {
-  console.log("🔄 Running full sync with backend…");
+// src/utils/sync.js
+import {
+  getAllItems,
+  addItem,
+  updateItem,
+  // deleteItem, // unused for now
+  // markItemSynced, // only if you add it to db.js
+} from "./db";
 
+export async function syncWithServer(token) {
   try {
-    // Step 1: Get all local items
+    console.log("🔄 Starting sync with server...");
+
+    // ✅ Scoped correctly inside the function
     const localItems = await getAllItems();
+    console.log("📦 Local items:", localItems);
 
-    // Step 2: Push local changes to backend
-    const pendingChanges = localItems.filter(
-      (item) => item.syncStatus !== "synced"
-    );
+    const res = await fetch("https://truckstop-backend.onrender.com/api/inventory", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
 
-    console.log(`📤 Found ${pendingChanges.length} local changes to push`);
+    const serverItems = await res.json();
+    console.log("🌐 Server items:", serverItems);
 
-    for (const localItem of pendingChanges) {
-      try {
-        if (localItem.isDeleted) {
-          // DELETE
-          const res = await fetch(
-            `${import.meta.env.VITE_BACKEND_URL}/api/inventory/${localItem._id}`,
-            {
-              method: "DELETE",
-              headers: { Authorization: `Bearer ${token}` },
-            }
-          );
+    // Push local changes
+    for (const item of localItems) {
+      if (item.syncStatus === "pending") {
+        console.log("⬆️ Syncing pending item:", item);
 
-          if (res.ok) {
-            console.log(`🗑️ Deleted on server: ${localItem._id}`);
-            await updateItem({ ...localItem, syncStatus: "synced" });
-          }
+        const { _id: tempId, ...body } = item;
+        delete body.syncStatus;
+
+        let response;
+        if (tempId.startsWith("local-")) {
+          response = await fetch("https://truckstop-backend.onrender.com/api/inventory", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify(body),
+          });
         } else {
-          // UPSERT
-          const res = await fetch(
-            `${import.meta.env.VITE_BACKEND_URL}/api/inventory/${localItem._id}`,
+          response = await fetch(
+            `https://truckstop-backend.onrender.com/api/inventory/${tempId}`,
             {
               method: "PUT",
               headers: {
                 "Content-Type": "application/json",
                 Authorization: `Bearer ${token}`,
               },
-              body: JSON.stringify(localItem),
+              body: JSON.stringify(body),
             }
           );
-
-          if (res.ok) {
-            const serverItem = await res.json();
-            console.log(`✅ Updated on server: ${localItem._id}`);
-            await updateItem({
-              ...serverItem,
-              syncStatus: "synced",
-              isDeleted: false,
-            });
-          } else if (res.status === 409) {
-            // Conflict: mark conflict instead of overwriting
-            const conflict = await res.json();
-            console.warn("⚠️ Conflict detected:", conflict);
-
-            await updateItem({
-              ...localItem,
-              syncStatus: "conflict",
-              conflictServer: conflict.server,
-            });
-          }
         }
-      } catch (err) {
-        console.error("❌ Error pushing change:", err);
+
+        if (response.ok) {
+          const savedItem = await response.json();
+          console.log("✅ Item synced successfully:", savedItem);
+          // await markItemSynced(tempId, savedItem); // if implemented
+        } else {
+          console.error("❌ Failed to sync item:", tempId, response.status);
+        }
       }
     }
 
-    // Step 3: Pull from server (authoritative copy)
-    const res = await fetch(
-      `${import.meta.env.VITE_BACKEND_URL}/api/inventory`,
-      {
-        headers: { Authorization: `Bearer ${token}` },
-      }
-    );
+    // Pull latest from server
+    for (const serverItem of serverItems) {
+      const local = localItems.find((i) => i._id === serverItem._id);
 
-    if (res.ok) {
-      const serverItems = await res.json();
-      console.log(`📥 Pulled ${serverItems.length} items from server`);
-
-      for (const serverItem of serverItems) {
-        await updateItem({
-          ...serverItem,
-          syncStatus: "synced",
-          isDeleted: false,
-        });
+      if (!local) {
+        await addItem({ ...serverItem, syncStatus: "synced" });
+        console.log(`[IDB] addItem -> _id=${serverItem._id}, syncStatus=synced`);
+      } else if (
+        serverItem.lastUpdated &&
+        local.lastUpdated &&
+        new Date(serverItem.lastUpdated) > new Date(local.lastUpdated)
+      ) {
+        await updateItem({ ...serverItem, syncStatus: "synced" });
+        console.log(`[IDB] updateItem -> _id=${serverItem._id}, syncStatus=synced`);
       }
     }
 
-    console.log("✅ Sync completed");
+    console.log("✅ Sync completed successfully.");
   } catch (err) {
-    console.error("❌ Full sync error:", err);
+    console.error("⚠️ Sync failed:", err);
   }
 }
