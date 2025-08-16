@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { getAllItems, addItem, updateItem, deleteItem } from "./utils/db";
-import SyncStatusPill from "./components/SyncStatusPill";
+import { getAllItems, addItem, updateItem, deleteItem } from "../utils/db.js";
+import SyncStatusPill from "../components/SyncStatusPill.jsx";
 
 export default function InventoryList({ token, dbReady, locationFilter, onMetricsChange }) {
   const [items, setItems] = useState([]);
