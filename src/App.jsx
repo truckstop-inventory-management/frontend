@@ -1,5 +1,5 @@
 // src/App.jsx
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback} from "react";
 import { initDB } from "./utils/db";
 import { LOCATION } from "./utils/location";
 
@@ -18,6 +18,13 @@ export default function App() {
     counts: { "C-Store": 0, "Restaurant": 0 },
     totals: { "C-Store": 0, "Restaurant": 0 },
   });
+
+  const handleMetricsChange = useCallback(
+    ({ counts, totals }) => {
+      setMetrics({ counts, totals });
+    },
+    []
+  );
 
   // Currency formatter
   const money = useMemo(
@@ -85,7 +92,7 @@ export default function App() {
           token={token}
           dbReady={dbReady}
           locationFilter={selectedView}
-          onMetricsChange={({ counts, totals }) => setMetrics({ counts, totals })}
+          onMetricsChange={handleMetricsChange}
         />
 
       </div>

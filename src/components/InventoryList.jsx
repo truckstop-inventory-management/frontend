@@ -448,22 +448,22 @@ export default function InventoryList({ token, dbReady, locationFilter, onCounts
                   @ $
                   <input
                     type="text"
-                    value={item.price}
+                    value={String(item.price ?? "")}
                     style={{ width: "70px", marginLeft: 4, marginRight: 4 }}
                     onChange={(e) => {
-                      const newPrice = parseFloat(e.target.value);
-                      if (isNaN(newPrice) || newPrice < 0) return;
+                      const raw = e.target.value;
+                      // allow empty or partial input (like "12." or ".5")
                       setInventory((prev) =>
                         prev.map((inv) =>
                           inv._id === item._id
-                            ? { ...inv, price: newPrice, syncStatus: "pending" }
+                            ? { ...inv, price: raw, syncStatus: "pending" }
                             : inv
                         )
                       );
                     }}
                     onBlur={async (e) => {
                       const newPrice = parseFloat(e.target.value);
-                      if (isNaN(newPrice) || newPrice < 0) return;
+                      if (isNaN(newPrice) || newPrice < 0) return; // 🚦 final validation
                       await updateItem({
                         ...item,
                         price: newPrice,
