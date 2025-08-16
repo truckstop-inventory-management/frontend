@@ -1,5 +1,5 @@
 import { getAllItems, updateItem } from "./db.js";
-
+console.log("🔧 VITE_BACKEND_URL =", import.meta.env.VITE_BACKEND_URL);
 export async function runFullSync(token) {
   console.log("🔄 Running full sync with backend…");
 
