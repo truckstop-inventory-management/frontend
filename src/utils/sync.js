@@ -1,126 +1,97 @@
-import axios from "axios";
-import {
-  getAllItems,
-  updateItem,
-  deleteItem,
-  remapLocalId,
-  markConflict,
-} from "./db";
+import { getAllItems, updateItem } from "./db.js";
 
-const API_URL =
-  import.meta.env.VITE_BACKEND_URL || "https://backend-nlxq.onrender.com/api";
-
-// === Full sync ===
 export async function runFullSync(token) {
-  if (!token) throw new Error("Missing auth token for sync");
-
   console.log("🔄 Running full sync with backend…");
 
-  // Phase 1: Push local pending changes
-  const all = await getAllItems();
-  const pendings = all.filter(
-    (it) => it.syncStatus === "pending" || it.syncStatus === "conflict"
-  );
-  console.log(`📤 Found ${pendings.length} local changes to push`);
-
-  for (const local of pendings) {
-    try {
-      if (local.isDeleted) {
-        if (local._id.startsWith("local-")) {
-          await deleteItem(local._id);
-          console.log(`🗑️ Deleted unsynced local item ${local._id}`);
-          continue;
-        }
-        const resp = await axios.delete(`${API_URL}/inventory/${local._id}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (resp.status === 200) {
-          await deleteItem(local._id);
-          console.log(`🗑️ Deleted remote + local item ${local._id}`);
-        }
-      } else if (local._id.startsWith("local-")) {
-        // Create new server record
-        const { _id, ...rest } = local;
-        const resp = await axios.post(`${API_URL}/inventory`, rest, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (resp.status === 201) {
-          const serverCopy = resp.data;
-          await remapLocalId(local._id, {
-            ...serverCopy,
-            syncStatus: "synced",
-            conflictServer: null,
-          });
-          console.log(`✅ Created server item for ${local._id} → ${serverCopy._id}`);
-        }
-      } else {
-        // Update server record
-        const resp = await axios.put(
-          `${API_URL}/inventory/${local._id}`,
-          local,
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
-        if (resp.status === 200) {
-          const serverCopy = resp.data;
-          await updateItem({
-            ...serverCopy,
-            syncStatus: "synced",
-            conflictServer: null,
-          });
-          console.log(`✅ Updated server item ${local._id}`);
-        }
-      }
-    } catch (e) {
-      const status = e?.response?.status;
-      if (status === 409 && e?.response?.data?.server) {
-        const serverCopy = e.response.data.server;
-        await markConflict(local._id, serverCopy);
-        console.warn(
-          `⚠️ Conflict on ${local._id} — marked 'conflict' with server copy.`
-        );
-      } else {
-        console.error(`❌ Sync push failed for ${local._id}:`, e.message);
-      }
-    }
-  }
-
-  // Phase 2: Fetch latest server copy
-  let latestServerItems = [];
   try {
-    const resp = await axios.get(`${API_URL}/inventory`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    latestServerItems = resp.data || [];
-    console.log(`📥 Pulled ${latestServerItems.length} items from server`);
-  } catch (e) {
-    console.error("❌ Failed to pull server items:", e.message);
-  }
+    // Step 1: Get all local items
+    const localItems = await getAllItems();
 
-  // Phase 3: Merge server → local
-  for (const item of latestServerItems) {
-    const existing = all.find((x) => x._id === item._id);
+    // Step 2: Push local changes to backend
+    const pendingChanges = localItems.filter(
+      (item) => item.syncStatus !== "synced"
+    );
 
-    // ✅ Do not overwrite conflict or pending items
-    if (existing && existing.syncStatus === "conflict") {
-      console.log(
-        `⏭️ Skipping server overwrite for ${item._id} (local is in conflict)`
-      );
-      continue;
+    console.log(`📤 Found ${pendingChanges.length} local changes to push`);
+
+    for (const localItem of pendingChanges) {
+      try {
+        if (localItem.isDeleted) {
+          // DELETE
+          const res = await fetch(
+            `${import.meta.env.VITE_BACKEND_URL}/api/inventory/${localItem._id}`,
+            {
+              method: "DELETE",
+              headers: { Authorization: `Bearer ${token}` },
+            }
+          );
+
+          if (res.ok) {
+            console.log(`🗑️ Deleted on server: ${localItem._id}`);
+            await updateItem({ ...localItem, syncStatus: "synced" });
+          }
+        } else {
+          // UPSERT
+          const res = await fetch(
+            `${import.meta.env.VITE_BACKEND_URL}/api/inventory/${localItem._id}`,
+            {
+              method: "PUT",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify(localItem),
+            }
+          );
+
+          if (res.ok) {
+            const serverItem = await res.json();
+            console.log(`✅ Updated on server: ${localItem._id}`);
+            await updateItem({
+              ...serverItem,
+              syncStatus: "synced",
+              isDeleted: false,
+            });
+          } else if (res.status === 409) {
+            // Conflict: mark conflict instead of overwriting
+            const conflict = await res.json();
+            console.warn("⚠️ Conflict detected:", conflict);
+
+            await updateItem({
+              ...localItem,
+              syncStatus: "conflict",
+              conflictServer: conflict.server,
+            });
+          }
+        }
+      } catch (err) {
+        console.error("❌ Error pushing change:", err);
+      }
     }
-    if (existing && existing.syncStatus === "pending") {
-      console.log(
-        `⏭️ Skipping server overwrite for ${item._id} (local is pending)`
-      );
-      continue;
+
+    // Step 3: Pull from server (authoritative copy)
+    const res = await fetch(
+      `${import.meta.env.VITE_BACKEND_URL}/api/inventory`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+
+    if (res.ok) {
+      const serverItems = await res.json();
+      console.log(`📥 Pulled ${serverItems.length} items from server`);
+
+      for (const serverItem of serverItems) {
+        await updateItem({
+          ...serverItem,
+          syncStatus: "synced",
+          isDeleted: false,
+        });
+      }
     }
 
-    await updateItem({
-      ...item,
-      isDeleted: false,
-      syncStatus: "synced",
-      conflictServer: null,
-    });
+    console.log("✅ Sync completed");
+  } catch (err) {
+    console.error("❌ Full sync error:", err);
   }
-
-  console.log("✅ Sync completed");
 }
