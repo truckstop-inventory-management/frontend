@@ -10,8 +10,10 @@ import {
 import { runFullSync } from "../utils/sync";
 import SyncStatusPill from "./SyncStatusPill.jsx";
 import { normalizeLocation, LOCATION } from "../utils/location";
+import { countByCategory, totalValueByCategory } from "../utils/categoryCounts";
+// at the top of InventoryList.jsx
 
-export default function InventoryList({ token, dbReady, locationFilter, onCountsChange }) {
+export default function InventoryList({ token, dbReady, locationFilter, onCountsChange, onMetricsChange,}) {
   const [inventory, setInventory] = useState([]);
   const [newItem, setNewItem] = useState({
     itemName: "",
@@ -131,8 +133,8 @@ export default function InventoryList({ token, dbReady, locationFilter, onCounts
       ...d,
       [name]:
         name === "quantity" ? Number(value)
-        : name === "price" ? Number(value)
-        : value,
+          : name === "price" ? Number(value)
+            : value,
     }));
   }
 
@@ -147,8 +149,8 @@ export default function InventoryList({ token, dbReady, locationFilter, onCounts
     if (!Number.isFinite(Number(editDraft.quantity))) return false;
     if (!Number.isFinite(Number(editDraft.price))) return false;
     if (Number(editDraft.quantity) < 0) return false;
-    if (Number(editDraft.price) < 0) return false;
-    return true;
+    return Number(editDraft.price) >= 0;
+
   }, [currentEditingItem, editDraft]);
 
   const draftIsDirty = useMemo(() => {
@@ -261,6 +263,18 @@ export default function InventoryList({ token, dbReady, locationFilter, onCounts
     }
   }, [counts, onCountsChange]);
 
+
+  useEffect(() => {
+    if (typeof onMetricsChange === "function") {
+      const counts = countByCategory(inventory);
+      const totals = totalValueByCategory(inventory);
+      onMetricsChange({ counts, totals });   // ✅ send both
+    }
+  }, [inventory, onMetricsChange]);
+
+
+
+
   const displayItems = useMemo(() => {
     if (!Array.isArray(inventory)) return [];
     if (!locationFilter) return inventory;
@@ -274,9 +288,11 @@ export default function InventoryList({ token, dbReady, locationFilter, onCounts
       <h2>Inventory</h2>
 
       {displayItems.length === 0 ? (
-        <div style={{ opacity: 0.85, padding: '12px 0' }}>
+        <div style={{ opacity: 0.85, padding: "12px 0" }}>
           {locationFilter ? (
-            <>No items found for <b>{locationFilter}</b>. Add your first item below.</>
+            <>
+              No items found for <b>{locationFilter}</b>. Add your first item below.
+            </>
           ) : (
             <>No items in inventory yet. Add your first item below.</>
           )}
@@ -284,21 +300,42 @@ export default function InventoryList({ token, dbReady, locationFilter, onCounts
       ) : (
         <ul>
           {displayItems.map((item) => (
-            <li key={item._id} style={{ borderBottom: '1px solid #eee', padding: '8px 0' }}>
+            <li
+              key={item._id}
+              style={{ borderBottom: "1px solid #eee", padding: "8px 0" }}
+            >
               {editingId === item._id ? (
                 <div>
                   <SyncStatusPill status={item.syncStatus} />
 
                   {item.syncStatus === "conflict" && item.conflictServer && (
-                    <div style={{ margin: "6px 0", padding: "6px 8px", border: "1px dashed #f59e0b" }}>
+                    <div
+                      style={{
+                        margin: "6px 0",
+                        padding: "6px 8px",
+                        border: "1px dashed #f59e0b",
+                      }}
+                    >
                       <strong>Conflict:</strong> Server has different values.
                       <div style={{ fontSize: 12, marginTop: 4 }}>
-                        <div>Mine → {editDraft.itemName} / {editDraft.quantity} / ${editDraft.price} / {editDraft.location}</div>
-                        <div>Server → {String(item.conflictServer.itemName)} / {String(item.conflictServer.quantity)} / ${String(item.conflictServer.price)} / {String(item.conflictServer.location)}</div>
+                        <div>
+                          Mine → {editDraft.itemName} / {editDraft.quantity} / $
+                          {editDraft.price} / {editDraft.location}
+                        </div>
+                        <div>
+                          Server → {String(item.conflictServer.itemName)} /{" "}
+                          {String(item.conflictServer.quantity)} / $
+                          {String(item.conflictServer.price)} /{" "}
+                          {String(item.conflictServer.location)}
+                        </div>
                       </div>
                       <div style={{ marginTop: 6 }}>
-                        <button onClick={() => resolveKeepLocal(item)}>Keep Mine</button>{" "}
-                        <button onClick={() => resolveUseServer(item)}>Use Server</button>
+                        <button onClick={() => resolveKeepLocal(item)}>
+                          Keep Mine
+                        </button>{" "}
+                        <button onClick={() => resolveUseServer(item)}>
+                          Use Server
+                        </button>
                       </div>
                     </div>
                   )}
@@ -338,8 +375,8 @@ export default function InventoryList({ token, dbReady, locationFilter, onCounts
                       !draftIsValid
                         ? "Please enter a name, non-negative quantity and price."
                         : !draftIsDirty
-                        ? "No changes to save."
-                        : ""
+                          ? "No changes to save."
+                          : ""
                     }
                   >
                     Save
@@ -349,22 +386,147 @@ export default function InventoryList({ token, dbReady, locationFilter, onCounts
               ) : (
                 <div>
                   <SyncStatusPill status={item.syncStatus} />
-                  {item.itemName} - {item.quantity} @ ${item.price} ({item.location})
+                  {item.itemName} -{" "}
+                  <input
+                    type="number"
+                    value={item.quantity}
+                    style={{ width: "60px", marginLeft: 4, marginRight: 4 }}
+                    min="0"
+                    onChange={(e) => {
+                      const newQty = Number(e.target.value);
+                      if (newQty < 0) return;
+                      setInventory((prev) =>
+                        prev.map((inv) =>
+                          inv._id === item._id
+                            ? { ...inv, quantity: newQty, syncStatus: "pending" }
+                            : inv
+                        )
+                      );
+                    }}
+                    onBlur={async (e) => {
+                      const newQty = Number(e.target.value);
+                      if (!Number.isFinite(newQty) || newQty < 0) return;
+                      await updateItem({
+                        ...item,
+                        quantity: newQty,
+                        syncStatus: "pending",
+                        lastUpdated: new Date().toISOString(),
+                        conflictServer: null,
+                      });
+                      if (navigator.onLine) {
+                        try {
+                          await runFullSync(token);
+                          await refreshLocalActive();
+                        } catch (err) {
+                          console.warn("Inline update sync failed:", err);
+                        }
+                      }
+                    }}
+                    onKeyDown={async (e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        const newQty = Number(e.currentTarget.value);
+                        if (!Number.isFinite(newQty) || newQty < 0) return;
+                        await updateItem({
+                          ...item,
+                          quantity: newQty,
+                          syncStatus: "pending",
+                          lastUpdated: new Date().toISOString(),
+                          conflictServer: null,
+                        });
+                        if (navigator.onLine) {
+                          try {
+                            await runFullSync(token);
+                            await refreshLocalActive();
+                          } catch (err) {
+                            console.warn("Inline update sync failed:", err);
+                          }
+                        }
+                      }
+                    }}
+                  />{" "}
+                  @ $
+                  <input
+                    type="text"
+                    value={item.price}
+                    style={{ width: "70px", marginLeft: 4, marginRight: 4 }}
+                    onChange={(e) => {
+                      const newPrice = parseFloat(e.target.value);
+                      if (isNaN(newPrice) || newPrice < 0) return;
+                      setInventory((prev) =>
+                        prev.map((inv) =>
+                          inv._id === item._id
+                            ? { ...inv, price: newPrice, syncStatus: "pending" }
+                            : inv
+                        )
+                      );
+                    }}
+                    onBlur={async (e) => {
+                      const newPrice = parseFloat(e.target.value);
+                      if (isNaN(newPrice) || newPrice < 0) return;
+                      await updateItem({
+                        ...item,
+                        price: newPrice,
+                        syncStatus: "pending",
+                        lastUpdated: new Date().toISOString(),
+                        conflictServer: null,
+                      });
+                      if (navigator.onLine) {
+                        try {
+                          await runFullSync(token);
+                          await refreshLocalActive();
+                        } catch (err) {
+                          console.warn("Inline price update sync failed:", err);
+                        }
+                      }
+                    }}
+                    onKeyDown={async (e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        const newPrice = parseFloat(e.currentTarget.value);
+                        if (isNaN(newPrice) || newPrice < 0) return;
+                        await updateItem({
+                          ...item,
+                          price: newPrice,
+                          syncStatus: "pending",
+                          lastUpdated: new Date().toISOString(),
+                          conflictServer: null,
+                        });
+                        if (navigator.onLine) {
+                          try {
+                            await runFullSync(token);
+                            await refreshLocalActive();
+                          } catch (err) {
+                            console.warn("Inline price update sync failed:", err);
+                          }
+                        }
+                      }
+                    }}
+                  />
+                  ({item.location})
                   {item.syncStatus === "conflict" && item.conflictServer && (
                     <div style={{ marginTop: 6 }}>
                       <div style={{ fontSize: 12, marginBottom: 4 }}>
                         <em>Server copy differs.</em>
                       </div>
-                      <button onClick={() => resolveKeepLocal(item)}>Keep Mine</button>{" "}
-                      <button onClick={() => resolveUseServer(item)}>Use Server</button>{" "}
-                      <button onClick={() => startEdit(item)}>Review & Edit</button>
+                      <button onClick={() => resolveKeepLocal(item)}>
+                        Keep Mine
+                      </button>{" "}
+                      <button onClick={() => resolveUseServer(item)}>
+                        Use Server
+                      </button>{" "}
+                      <button onClick={() => startEdit(item)}>
+                        Review & Edit
+                      </button>
                     </div>
                   )}
                   {item.syncStatus !== "conflict" && (
                     <>
                       {" "}
                       <button onClick={() => startEdit(item)}>Edit</button>{" "}
-                      <button onClick={() => handleDelete(item._id)}>Delete</button>
+                      <button onClick={() => handleDelete(item._id)}>
+                        Delete
+                      </button>
                     </>
                   )}
                 </div>
