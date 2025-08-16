@@ -2,18 +2,16 @@ import React, { useEffect, useState } from "react";
 import { getAllItems, addItem, updateItem, deleteItem } from "../utils/db.js";
 import SyncStatusPill from "../components/SyncStatusPill.jsx";
 
-export default function InventoryList({ token, dbReady, locationFilter, onMetricsChange }) {
+const InventoryList = ({ dbReady, onMetricsChange }) => {
   const [items, setItems] = useState([]);
   const [newItem, setNewItem] = useState({
     itemName: "",
-    quantity: "",
+    quantity: 0,
     price: "",
-    location: "",
+    location: "C-Store",
   });
-  const [editingId, setEditingId] = useState(null);
-  const [editDraft, setEditDraft] = useState({});
 
-  // Load items from IndexedDB
+  // Load items when dbReady changes (not on every items.length change)
   useEffect(() => {
     if (dbReady) {
       getAllItems().then((data) => {
@@ -31,190 +29,145 @@ export default function InventoryList({ token, dbReady, locationFilter, onMetric
         onMetricsChange({ counts, totals });
       });
     }
-  }, [dbReady, items.length]);
+  }, [dbReady, onMetricsChange]);
 
-  function handleChange(e) {
-    setNewItem({ ...newItem, [e.target.name]: e.target.value });
-  }
+  const handleAddItem = async () => {
+    if (!newItem.itemName) return;
+    const added = await addItem(newItem);
+    setItems([...items, added]);
+    setNewItem({ itemName: "", quantity: 0, price: "", location: "C-Store" });
+  };
 
-  async function handleAddItem(e) {
-    e.preventDefault();
-    const item = {
-      ...newItem,
-      quantity: parseInt(newItem.quantity),
-      price: parseFloat(newItem.price),
-      lastUpdated: new Date().toISOString(),
-      syncStatus: "pending",
-      isDeleted: false,
-    };
-    await addItem(item);
-    setNewItem({ itemName: "", quantity: "", price: "", location: "" });
-    setItems(await getAllItems());
-  }
+  const handleUpdateItem = async (id, field, value) => {
+    const updatedItem = items.find((i) => i._id === id);
+    if (!updatedItem) return;
 
-  async function handleDelete(id) {
+    updatedItem[field] = value;
+
+    await updateItem(updatedItem);
+    setItems(items.map((i) => (i._id === id ? updatedItem : i)));
+  };
+
+  const handleDeleteItem = async (id) => {
     await deleteItem(id);
-    setItems(await getAllItems());
-  }
-
-  function startEdit(item) {
-    setEditingId(item._id);
-    setEditDraft({ ...item });
-  }
-
-  function cancelEdit() {
-    setEditingId(null);
-    setEditDraft({});
-  }
-
-  function onEditChange(e) {
-    setEditDraft({ ...editDraft, [e.target.name]: e.target.value });
-  }
-
-  async function saveEdit(item) {
-    const updated = {
-      ...item,
-      ...editDraft,
-      quantity: parseInt(editDraft.quantity),
-      price: parseFloat(editDraft.price),
-      lastUpdated: new Date().toISOString(),
-      syncStatus: "pending",
-    };
-    await updateItem(updated);
-    setEditingId(null);
-    setEditDraft({});
-    setItems(await getAllItems());
-  }
-
-  // --- Conflict Resolution ---
-  async function resolveKeepLocal(item) {
-    try {
-      const res = await fetch(
-        `${import.meta.env.VITE_BACKEND_URL}/api/inventory/${item._id}`,
-        {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            itemName: item.itemName,
-            quantity: item.quantity,
-            price: item.price,
-            location: item.location,
-            lastUpdated: new Date().toISOString(), // bump timestamp
-          }),
-        }
-      );
-
-      if (res.ok) {
-        const serverItem = await res.json();
-        await updateItem({ ...serverItem, syncStatus: "synced", isDeleted: false });
-        console.log("✅ Conflict resolved: kept local");
-        setItems(await getAllItems());
-      }
-    } catch (err) {
-      console.error("❌ Error resolving keep local:", err);
-    }
-  }
-
-  async function resolveUseServer(item) {
-    try {
-      await updateItem({
-        ...item.conflictServer,
-        syncStatus: "synced",
-        isDeleted: false,
-      });
-      console.log("✅ Conflict resolved: used server copy");
-      setItems(await getAllItems());
-    } catch (err) {
-      console.error("❌ Error resolving use server:", err);
-    }
-  }
-
-  // ---- Render ----
-  const displayItems = locationFilter
-    ? items.filter((i) => i.location === locationFilter)
-    : items;
+    setItems(items.filter((i) => i._id !== id));
+  };
 
   return (
-    <div style={{ padding: 16 }}>
-      <h2>Inventory</h2>
+    <div className="p-4">
+      <h2 className="text-xl font-bold mb-4">Inventory List</h2>
 
-      {displayItems.length === 0 ? (
-        <div style={{ opacity: 0.85, padding: "12px 0" }}>
-          {locationFilter ? (
-            <>No items found for <b>{locationFilter}</b>. Add your first item below.</>
-          ) : (
-            <>No items in inventory yet. Add your first item below.</>
-          )}
-        </div>
-      ) : (
-        <ul>
-          {displayItems.map((item) => (
-            <li key={item._id} style={{ borderBottom: "1px solid #eee", padding: "8px 0" }}>
-              {editingId === item._id ? (
-                <div>
-                  <SyncStatusPill status={item.syncStatus} />
+      {/* Add Item */}
+      <div className="flex gap-2 mb-4">
+        <input
+          className="border p-2 rounded"
+          placeholder="Item Name"
+          value={newItem.itemName}
+          onChange={(e) => setNewItem({ ...newItem, itemName: e.target.value })}
+        />
+        <input
+          type="number"
+          className="border p-2 rounded"
+          placeholder="Qty"
+          value={newItem.quantity}
+          onChange={(e) =>
+            setNewItem({ ...newItem, quantity: Number(e.target.value) })
+          }
+        />
+        <input
+          type="number"
+          step="0.01"
+          className="border p-2 rounded"
+          placeholder="Price"
+          value={newItem.price}
+          onChange={(e) =>
+            setNewItem({ ...newItem, price: e.target.value })
+          }
+        />
+        <select
+          className="border p-2 rounded"
+          value={newItem.location}
+          onChange={(e) =>
+            setNewItem({ ...newItem, location: e.target.value })
+          }
+        >
+          <option value="C-Store">C-Store</option>
+          <option value="Restaurant">Restaurant</option>
+        </select>
+        <button
+          onClick={handleAddItem}
+          className="bg-green-500 text-white px-4 py-2 rounded"
+        >
+          Add
+        </button>
+      </div>
 
-                  {item.syncStatus === "conflict" && item.conflictServer && (
-                    <div style={{ margin: "6px 0", padding: "6px 8px", border: "1px dashed #f59e0b" }}>
-                      <strong>Conflict:</strong> Server has different values.
-                      <div style={{ fontSize: 12, marginTop: 4 }}>
-                        <div>Mine → {editDraft.itemName} / {editDraft.quantity} / ${editDraft.price} / {editDraft.location}</div>
-                        <div>Server → {String(item.conflictServer.itemName)} / {String(item.conflictServer.quantity)} / ${String(item.conflictServer.price)} / {String(item.conflictServer.location)}</div>
-                      </div>
-                      <div style={{ marginTop: 6 }}>
-                        <button onClick={() => resolveKeepLocal(item)}>Keep Mine</button>{" "}
-                        <button onClick={() => resolveUseServer(item)}>Use Server</button>
-                      </div>
-                    </div>
-                  )}
-
-                  <input name="itemName" value={editDraft.itemName} onChange={onEditChange} placeholder="Item Name" />
-                  <input name="quantity" type="number" value={editDraft.quantity} onChange={onEditChange} placeholder="Quantity" />
-                  <input name="price" type="text" value={editDraft.price} onChange={onEditChange} placeholder="Price" />
-                  <input name="location" value={editDraft.location} onChange={onEditChange} placeholder="Location" />
-
-                  <button onClick={() => saveEdit(item)}>Save</button>
-                  <button onClick={cancelEdit}>Cancel</button>
-                </div>
-              ) : (
-                <div>
-                  <SyncStatusPill status={item.syncStatus} />
-                  {item.itemName} - {item.quantity} @ ${item.price} ({item.location})
-                  {item.syncStatus === "conflict" && item.conflictServer && (
-                    <div style={{ marginTop: 6 }}>
-                      <div style={{ fontSize: 12, marginBottom: 4 }}>
-                        <em>Server copy differs.</em>
-                      </div>
-                      <button onClick={() => resolveKeepLocal(item)}>Keep Mine</button>{" "}
-                      <button onClick={() => resolveUseServer(item)}>Use Server</button>{" "}
-                      <button onClick={() => startEdit(item)}>Review & Edit</button>
-                    </div>
-                  )}
-                  {item.syncStatus !== "conflict" && (
-                    <>
-                      {" "}
-                      <button onClick={() => startEdit(item)}>Edit</button>{" "}
-                      <button onClick={() => handleDelete(item._id)}>Delete</button>
-                    </>
-                  )}
-                </div>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <h3>Add New Item</h3>
-      <form onSubmit={handleAddItem}>
-        <input name="itemName" placeholder="Item Name" value={newItem.itemName} onChange={handleChange} required />
-        <input name="quantity" type="number" placeholder="Quantity" value={newItem.quantity} onChange={handleChange} required />
-        <input name="price" type="text" placeholder="Price" value={newItem.price} onChange={handleChange} required />
-        <input name="location" placeholder="Location" value={newItem.location} onChange={handleChange} required />
-        <button type="submit">Add Item</button>
-      </form>
+      {/* Items List */}
+      <table className="w-full border">
+        <thead>
+        <tr className="bg-gray-200">
+          <th className="border p-2">Name</th>
+          <th className="border p-2">Qty</th>
+          <th className="border p-2">Price</th>
+          <th className="border p-2">Location</th>
+          <th className="border p-2">Status</th>
+          <th className="border p-2">Actions</th>
+        </tr>
+        </thead>
+        <tbody>
+        {items.map((i) => (
+          <tr key={i._id} className="text-center">
+            <td className="border p-2">{i.itemName}</td>
+            <td className="border p-2">
+              <input
+                type="number"
+                value={i.quantity}
+                onChange={(e) =>
+                  handleUpdateItem(i._id, "quantity", Number(e.target.value))
+                }
+                className="border p-1 w-16"
+              />
+            </td>
+            <td className="border p-2">
+              <input
+                type="number"
+                step="0.01"
+                value={i.price}
+                onChange={(e) =>
+                  handleUpdateItem(i._id, "price", e.target.value)
+                }
+                className="border p-1 w-20"
+              />
+            </td>
+            <td className="border p-2">
+              <select
+                value={i.location}
+                onChange={(e) =>
+                  handleUpdateItem(i._id, "location", e.target.value)
+                }
+                className="border p-1"
+              >
+                <option value="C-Store">C-Store</option>
+                <option value="Restaurant">Restaurant</option>
+              </select>
+            </td>
+            <td className="border p-2">
+              <SyncStatusPill status={i.syncStatus} />
+            </td>
+            <td className="border p-2">
+              <button
+                onClick={() => handleDeleteItem(i._id)}
+                className="bg-red-500 text-white px-2 py-1 rounded"
+              >
+                Delete
+              </button>
+            </td>
+          </tr>
+        ))}
+        </tbody>
+      </table>
     </div>
   );
-}
+};
+
+export default InventoryList;
