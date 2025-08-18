@@ -1,9 +1,9 @@
 // src/App.jsx
-import React, { useState, useEffect, useMemo, useCallback} from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { initDB } from "./utils/db";
+import { syncWithServer } from "./utils/sync";   // 🔄 sync logic
 import { LOCATION } from "./utils/location";
 
-// Assuming these components already exist in your codebase
 import InventoryViewToggle from "./components/InventoryViewToggle";
 import InventoryList from "./components/InventoryList";
 import LoginForm from "./components/LoginForm";
@@ -13,20 +13,15 @@ export default function App() {
   const [token, setToken] = useState(null);
   const [selectedView, setSelectedView] = useState(LOCATION.C_STORE);
 
-  // Counts + totals for C-Store and Restaurant
   const [metrics, setMetrics] = useState({
-    counts: { "C-Store": 0, "Restaurant": 0 },
-    totals: { "C-Store": 0, "Restaurant": 0 },
+    counts: { "C-Store": 0, Restaurant: 0 },
+    totals: { "C-Store": 0, Restaurant: 0 },
   });
 
-  const handleMetricsChange = useCallback(
-    ({ counts, totals }) => {
-      setMetrics({ counts, totals });
-    },
-    []
-  );
+  const handleMetricsChange = useCallback(({ counts, totals }) => {
+    setMetrics({ counts, totals });
+  }, []);
 
-  // Currency formatter
   const money = useMemo(
     () =>
       new Intl.NumberFormat(undefined, {
@@ -36,19 +31,26 @@ export default function App() {
     []
   );
 
-  // On mount: initialize DB and restore token
+  // On mount: init DB + restore token
   useEffect(() => {
     initDB().then(() => setDbReady(true));
     const savedToken = localStorage.getItem("token");
     if (savedToken) setToken(savedToken);
   }, []);
 
+  // Sync once DB + token ready
+  useEffect(() => {
+    if (dbReady && token) {
+      syncWithServer(token);
+    }
+  }, [dbReady, token]);
+
   if (token) {
     const selectedTotal = metrics.totals[selectedView] || 0;
 
     return (
       <div style={{ paddingTop: 48 }}>
-        {/* Header row with Logout, View Toggle, and Total pill */}
+        {/* Header */}
         <div
           style={{
             display: "flex",
@@ -87,18 +89,16 @@ export default function App() {
           </div>
         </div>
 
-        {/* Inventory List with callback to update metrics */}
+        {/* Inventory List */}
         <InventoryList
           token={token}
           dbReady={dbReady}
           locationFilter={selectedView}
           onMetricsChange={handleMetricsChange}
         />
-
       </div>
     );
   }
 
-  // If not logged in, show login form
   return <LoginForm onLogin={setToken} />;
 }

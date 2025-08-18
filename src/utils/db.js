@@ -3,7 +3,7 @@ import { openDB } from 'idb';
 
 let dbInstance = null;
 
-// Open the ORIGINAL DB that already has your data
+// Open the DB
 export async function initDB() {
   if (dbInstance) return dbInstance;
 
@@ -15,7 +15,6 @@ export async function initDB() {
         store.createIndex('syncStatus', 'syncStatus');
         store.createIndex('isDeleted', 'isDeleted');
       } else {
-        // Ensure indexes exist after version bumps
         const store = tx.objectStore('inventory');
         if (!store.indexNames.contains('isDeleted')) {
           store.createIndex('isDeleted', 'isDeleted');
@@ -34,7 +33,7 @@ export async function initDB() {
   return dbInstance;
 }
 
-// Raw read
+// Get all items
 export async function getAllItems() {
   const db = await initDB();
   return db.getAll('inventory');
@@ -61,7 +60,7 @@ export async function getPendingDeletedItems() {
   return all.filter((item) => item.isDeleted && item.syncStatus === 'pending');
 }
 
-// Insert or no-op if exists
+// Insert or update
 export async function addItem(raw) {
   const db = await initDB();
   const tx = db.transaction('inventory', 'readwrite');
@@ -77,7 +76,6 @@ export async function addItem(raw) {
     quantity,
     price,
     location: String(raw?.location || '').trim(),
-    // 🔽 preserve if provided, else default
     isDeleted: typeof raw?.isDeleted === 'boolean' ? raw.isDeleted : false,
     syncStatus: raw?.syncStatus || 'pending',
     conflictServer: raw?.conflictServer ?? null,
@@ -91,7 +89,7 @@ export async function addItem(raw) {
   return doc;
 }
 
-// Upsert with guaranteed lastUpdated
+// Update existing item
 export async function updateItem(item) {
   const db = await initDB();
   const toPut = {
@@ -128,7 +126,7 @@ export async function markItemDeleted(id) {
   return next;
 }
 
-// Hard delete (utility)
+// Hard delete
 export async function deleteItem(id) {
   const db = await initDB();
   await db.delete('inventory', id);
@@ -146,7 +144,7 @@ export async function purgeDeletedSynced() {
   }
 }
 
-// Record a 409 conflict with server copy snapshot
+// Conflict handling
 export async function markConflict(id, serverCopy) {
   const db = await initDB();
   const tx = db.transaction('inventory', 'readwrite');
@@ -165,10 +163,7 @@ export async function markConflict(id, serverCopy) {
   console.log(`[IDB] markConflict -> _id=${id} set to conflict`);
 }
 
-/**
- * Remap a temporary local id (e.g., "local_...") to the server ObjectId atomically.
- * Prevents duplicate rows during create/upsert flows.
- */
+// Remap local id to server id
 export async function remapLocalId(oldId, newId, serverDoc = {}) {
   const db = await initDB();
   const tx = db.transaction('inventory', 'readwrite');
@@ -182,17 +177,35 @@ export async function remapLocalId(oldId, newId, serverDoc = {}) {
 
   const next = {
     ...existing,
-    ...serverDoc,           // prefer any fields returned by server
-    _id: newId,             // swap to server ObjectId
+    ...serverDoc,
+    _id: newId,
     syncStatus: 'synced',
     conflictServer: null,
     lastUpdated: new Date().toISOString(),
   };
 
-  await store.delete(oldId); // remove the temp-keyed record
-  await store.put(next);     // write with the real server _id
+  await store.delete(oldId);
+  await store.put(next);
   await tx.done;
 
   console.log(`[IDB] remapLocalId -> ${oldId} ➝ ${newId}`);
   return next;
+}
+
+// Mark an item synced
+export async function markItemSynced(tempId, savedItem) {
+  const db = await initDB();
+  const tx = db.transaction('inventory', 'readwrite');
+  const store = tx.objectStore('inventory');
+
+  if (tempId.startsWith("local_")) {
+    await store.delete(tempId);
+    await store.put({ ...savedItem, syncStatus: "synced" });
+    console.log(`[IDB] migrated local->server ID ${tempId} → ${savedItem._id}`);
+  } else {
+    await store.put({ ...savedItem, syncStatus: "synced" });
+    console.log(`[IDB] updated item ${savedItem._id} to synced`);
+  }
+
+  await tx.done;
 }

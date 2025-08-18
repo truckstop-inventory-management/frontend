@@ -3,22 +3,20 @@ import {
   getAllItems,
   addItem,
   updateItem,
-  // deleteItem, // unused for now
-  // markItemSynced, // only if you add it to db.js
+  // deleteItem, // ❌ removed unused
+  markItemSynced, // ✅ now used
 } from "./db";
 
 export async function syncWithServer(token) {
   try {
     console.log("🔄 Starting sync with server...");
 
-    // ✅ Scoped correctly inside the function
     const localItems = await getAllItems();
     console.log("📦 Local items:", localItems);
 
-    const res = await fetch("https://truckstop-backend.onrender.com/api/inventory", {
+    const res = await fetch("https://backend-nlxq.onrender.com/api/inventory", {
       headers: { Authorization: `Bearer ${token}` },
     });
-
     const serverItems = await res.json();
     console.log("🌐 Server items:", serverItems);
 
@@ -27,12 +25,14 @@ export async function syncWithServer(token) {
       if (item.syncStatus === "pending") {
         console.log("⬆️ Syncing pending item:", item);
 
-        const { _id: tempId, ...body } = item;
+        const tempId = item._id;
+        const body = { ...item };
+        delete body._id;
         delete body.syncStatus;
 
         let response;
         if (tempId.startsWith("local-")) {
-          response = await fetch("https://truckstop-backend.onrender.com/api/inventory", {
+          response = await fetch("https://backend-nlxq.onrender.com/api/inventory", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -42,7 +42,7 @@ export async function syncWithServer(token) {
           });
         } else {
           response = await fetch(
-            `https://truckstop-backend.onrender.com/api/inventory/${tempId}`,
+            `https://backend-nlxq.onrender.com/api/inventory/${tempId}`,
             {
               method: "PUT",
               headers: {
@@ -57,7 +57,9 @@ export async function syncWithServer(token) {
         if (response.ok) {
           const savedItem = await response.json();
           console.log("✅ Item synced successfully:", savedItem);
-          // await markItemSynced(tempId, savedItem); // if implemented
+
+          // ✅ mark as synced in IndexedDB
+          await markItemSynced(tempId, savedItem);
         } else {
           console.error("❌ Failed to sync item:", tempId, response.status);
         }
@@ -66,6 +68,11 @@ export async function syncWithServer(token) {
 
     // Pull latest from server
     for (const serverItem of serverItems) {
+      if (!serverItem._id) {
+        console.error("❌ Server item missing _id:", serverItem);
+        continue;
+      }
+
       const local = localItems.find((i) => i._id === serverItem._id);
 
       if (!local) {
@@ -76,7 +83,15 @@ export async function syncWithServer(token) {
         local.lastUpdated &&
         new Date(serverItem.lastUpdated) > new Date(local.lastUpdated)
       ) {
-        await updateItem({ ...serverItem, syncStatus: "synced" });
+        await updateItem(serverItem._id, {
+          _id: serverItem._id,
+          itemName: serverItem.itemName,
+          quantity: serverItem.quantity,
+          price: serverItem.price,
+          location: serverItem.location,
+          lastUpdated: serverItem.lastUpdated,
+          syncStatus: "synced",
+        });
         console.log(`[IDB] updateItem -> _id=${serverItem._id}, syncStatus=synced`);
       }
     }
