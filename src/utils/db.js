@@ -92,16 +92,24 @@ export async function addItem(raw) {
 // Update existing item
 export async function updateItem(item) {
   const db = await initDB();
+
+  if (!item || !item._id) {
+    console.error("[IDB] updateItem called without valid _id", item);
+    throw new Error("updateItem requires a valid _id");
+  }
+
   const toPut = {
     ...item,
     lastUpdated: item.lastUpdated ?? new Date().toISOString(),
   };
-  await db.put('inventory', toPut);
+
+  await db.put("inventory", toPut);
   console.log(
     `[IDB] updateItem -> _id=${toPut._id}, syncStatus=${toPut.syncStatus}, isDeleted=${toPut.isDeleted}`
   );
   return toPut;
 }
+
 
 // Tombstone local delete
 export async function markItemDeleted(id) {

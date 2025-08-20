@@ -1,15 +1,17 @@
 // src/App.jsx
 import React, { useState, useEffect, useMemo, useCallback } from "react";
-import { initDB } from "./utils/db";
+import { initDB, addItem } from "./utils/db";
 import { syncWithServer } from "./utils/sync";   // 🔄 sync logic
 import { LOCATION } from "./utils/location";
 
 import InventoryViewToggle from "./components/InventoryViewToggle";
 import InventoryList from "./components/InventoryList";
 import LoginForm from "./components/LoginForm";
+import FloatingButton from './components/FloatingButton.jsx';
 
 export default function App() {
   const [dbReady, setDbReady] = useState(false);
+  const [isAdding, setIsAdding] = useState(false);
   const [token, setToken] = useState(null);
   const [selectedView, setSelectedView] = useState(LOCATION.C_STORE);
 
@@ -21,6 +23,38 @@ export default function App() {
   const handleMetricsChange = useCallback(({ counts, totals }) => {
     setMetrics({ counts, totals });
   }, []);
+
+  const handleAddItem = async () => {
+    if (isAdding) return; // 🔒 prevent duplicates on rapid clicks
+    setIsAdding(true);
+
+    try {
+      const newItem = {
+        _id: `local_${Date.now()}`, // consistent temp id
+        itemName: "Test Item",
+        quantity: 1,
+        price: 0,
+        location: "C-Store",
+        syncStatus: "pending",
+        isDeleted: false,
+        lastUpdated: new Date().toISOString(),
+      };
+
+      await addItem(newItem);
+      console.log("[App] Added new item:", newItem);
+
+      // Optionally trigger sync immediately
+      await syncWithServer();
+
+      // Refresh local state
+      const allItems = await getAllItems();
+      setItems(allItems);
+    } catch (err) {
+      console.error("[App] Error adding item:", err);
+    } finally {
+      setIsAdding(false);
+    }
+  };
 
   const money = useMemo(
     () =>
@@ -35,6 +69,7 @@ export default function App() {
   useEffect(() => {
     initDB().then(() => setDbReady(true));
     const savedToken = localStorage.getItem("token");
+    console.log("Fetching server inventory with token:", token);
     if (savedToken) setToken(savedToken);
   }, []);
 
@@ -96,6 +131,9 @@ export default function App() {
           locationFilter={selectedView}
           onMetricsChange={handleMetricsChange}
         />
+
+        {/* Floating + Button */}
+        <FloatingButton onClick={handleAddItem}/>
       </div>
     );
   }
