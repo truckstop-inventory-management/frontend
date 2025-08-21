@@ -1,16 +1,13 @@
 import { getAllItems, updateItem, deleteItem } from "./db";
+import { fetchWithAuth } from "./fetchWithAuth";
 
 const API_URL = import.meta.env.VITE_API_URL;
 
 async function deleteOnServer(id) {
   try {
-    const token = localStorage.getItem("token");
-    const res = await fetch(`${API_URL}/inventory/${id}`, {
+    const res = await fetchWithAuth(`${API_URL}/inventory/${id}`, {
       method: "DELETE",
-      headers: {
-        "Authorization": `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
     });
 
     if (!res.ok) {
@@ -29,9 +26,7 @@ export async function syncWithServer() {
   try {
     // 1. Fetch server inventory
     console.log("[SYNC] Fetching server inventory...");
-    const serverResponse = await fetch(`${API_URL}/inventory`, {
-      headers: { "Authorization": `Bearer ${localStorage.getItem("token")}` },
-    });
+    const serverResponse = await fetchWithAuth(`${API_URL}/inventory`);
     const serverItems = await serverResponse.json();
 
     // 2. Get local items
@@ -55,11 +50,8 @@ export async function syncWithServer() {
             `[SYNC] Removing duplicate on server "${dup.itemName}" at ${dup.location}`
           );
           try {
-            await fetch(`${API_URL}/inventory/${dup._id}`, {
+            await fetchWithAuth(`${API_URL}/inventory/${dup._id}`, {
               method: "DELETE",
-              headers: {
-                Authorization: `Bearer ${localStorage.getItem("token")}`,
-              },
             });
           } catch (err) {
             console.error("[SYNC] Failed to delete duplicate from server:", err);
@@ -75,7 +67,6 @@ export async function syncWithServer() {
         (i) => `${i.itemName}-${i.location}` === key
       );
 
-      // 🚫 Skip if item exists locally and is marked deleted
       if (localMatch && localMatch.isDeleted) {
         console.log(
           `[SYNC] Skipping re-add of deleted item "${serverItem.itemName}" at ${serverItem.location}`
@@ -83,12 +74,10 @@ export async function syncWithServer() {
         continue;
       }
 
-      // ✅ Add missing server item into local if not found
       if (!localMatch) {
         await updateItem({
           ...serverItem,
           syncStatus: "synced",
-          //isDeleted: false,
         });
         console.log("[IDB] updateItem =>", serverItem);
       }
@@ -103,40 +92,37 @@ export async function syncWithServer() {
       }
     }
 
-  // 6. Sync local with server (after cleanup, so deleted items don’t come back)
-      for (const serverItem of serverItems) {
-        const key = `${serverItem.itemName}-${serverItem.location}`;
-        const localMatch = localItems.find(
-          (i) => `${i.itemName}-${i.location}` === key
+    // 6. Sync local with server (after cleanup)
+    for (const serverItem of serverItems) {
+      const key = `${serverItem.itemName}-${serverItem.location}`;
+      const localMatch = localItems.find(
+        (i) => `${i.itemName}-${i.location}` === key
+      );
+
+      if (localMatch && localMatch.isDeleted) {
+        console.log(
+          `[SYNC] Skipping re-add of deleted item "${serverItem.itemName}" at ${serverItem.location}`
         );
-
-        if (localMatch && localMatch.isDeleted) {
-          console.log(
-            `[SYNC] Skipping re-add of deleted item "${serverItem.itemName}" at ${serverItem.location}`
-          );
-          continue;
-        }
-
-        if (!localMatch) {
-          await updateItem({
-            ...serverItem,
-            syncStatus: "synced",
-            isDeleted: false,
-          });
-          console.log("[IDB] updateItem =>", serverItem);
-        }
+        continue;
       }
+
+      if (!localMatch) {
+        await updateItem({
+          ...serverItem,
+          syncStatus: "synced",
+          isDeleted: false,
+        });
+        console.log("[IDB] updateItem =>", serverItem);
+      }
+    }
 
     // 7. Push pending local items
     for (const item of localItems) {
       if (item.syncStatus === "pending" && !item.isDeleted) {
         try {
-          const res = await fetch(`${API_URL}/inventory`, {
+          const res = await fetchWithAuth(`${API_URL}/inventory`, {
             method: "POST",
-            headers: {
-              Authorization: `Bearer ${localStorage.getItem("token")}`,
-              "Content-Type": "application/json",
-            },
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify(item),
           });
 
@@ -149,7 +135,9 @@ export async function syncWithServer() {
 
             if (item._id && item._id.startsWith("local_")) {
               await deleteItem(item._id);
-              console.log(`[SYNC] Removed stale local item ${item._id} after successful push`);
+              console.log(
+                `[SYNC] Removed stale local item ${item._id} after successful push`
+              );
             }
           } else if (res.status === 409) {
             console.warn(
@@ -157,44 +145,49 @@ export async function syncWithServer() {
               item.itemName
             );
 
-            // Find correct server item by key
             const key = `${item.itemName}-${item.location}`;
             const serverMatch = serverItems.find(
               (s) => `${s.itemName}-${s.location}` === key
             );
 
             if (serverMatch) {
-              const updateRes = await fetch(`${API_URL}/inventory/${serverMatch._id}`, {
-                method: "PUT",
-                headers: {
-                  Authorization: `Bearer ${localStorage.getItem("token")}`,
-                  "Content-Type": "application/json",
-                },
-                body: JSON.stringify(item),
-              });
+              const updateRes = await fetchWithAuth(
+                `${API_URL}/inventory/${serverMatch._id}`,
+                {
+                  method: "PUT",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify(item),
+                }
+              );
 
               if (updateRes.ok) {
                 const updated = await updateRes.json();
                 console.log(
                   `[SYNC] Updated existing item -> ${updated.itemName} (${updated._id})`
                 );
-                await updateItem({ ...updated, syncStatus: "synced", isDeleted: false });
+                await updateItem({
+                  ...updated,
+                  syncStatus: "synced",
+                  isDeleted: false,
+                });
 
-                // Remove stale local pending entry if it had a local_ id
                 if (item._id && item._id.startsWith("local_")) {
                   await deleteItem(item._id);
-                  console.log(`[SYNC] Removed stale local item ${item._id} after conflict resolution`);
+                  console.log(
+                    `[SYNC] Removed stale local item ${item._id} after conflict resolution`
+                  );
                 }
-
               } else {
-                console.error("[SYNC] Failed to update after conflict", await updateRes.text());
+                console.error(
+                  "[SYNC] Failed to update after conflict",
+                  await updateRes.text()
+                );
               }
             } else {
               console.error(
                 "[SYNC] Conflict detected but no matching server item found"
               );
             }
-
           } else {
             console.error(
               "[SYNC] Failed to push pending item",

@@ -7,7 +7,7 @@ import { LOCATION } from "./utils/location";
 import InventoryViewToggle from "./components/InventoryViewToggle";
 import InventoryList from "./components/InventoryList";
 import LoginForm from "./components/LoginForm";
-import FloatingButton from './components/FloatingButton.jsx';
+import FloatingButton from './components/FloatingAddButton.jsx';
 
 export default function App() {
   const [dbReady, setDbReady] = useState(false);
@@ -68,12 +68,14 @@ export default function App() {
   // On mount: init DB + restore token
   useEffect(() => {
     initDB().then(() => setDbReady(true));
-    const savedToken = localStorage.getItem("token");
-    console.log("Fetching server inventory with token:", token);
-    if (savedToken) setToken(savedToken);
+
+    const existing = localStorage.getItem("token");
+    if (existing && existing !== "null") {
+      setToken(existing);
+    }
   }, []);
 
-  // Sync once DB + token ready
+  // Sync when ready + token present
   useEffect(() => {
     if (dbReady && token) {
       syncWithServer(token);
@@ -124,7 +126,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* Inventory List */}
         <InventoryList
           token={token}
           dbReady={dbReady}

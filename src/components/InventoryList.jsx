@@ -1,5 +1,7 @@
+// noinspection GrazieInspection
+
 import React, { useEffect, useState } from "react";
-import { getAllItems, addItem, updateItem, deleteItem } from "../utils/db.js";
+import { getAllItems, addItem, updateItem, markItemDeleted } from "../utils/db.js";
 import SyncStatusPill from "../components/SyncStatusPill.jsx";
 
 const InventoryList = ({ dbReady, onMetricsChange }) => {
@@ -49,115 +51,103 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
   };
 
   const handleDeleteItem = async (id) => {
-    await deleteItem(id);
+    await markItemDeleted(id);
     setItems(items.filter((i) => i._id !== id));
   };
 
   return (
     <div className="p-4">
-      <h2 className="text-xl font-bold mb-4">Inventory List</h2>
+      <h2 className="text-xl font-bold mb-4 text-gray-800 dark:text-gray-100">Inventory List</h2>
 
       {/* Add Item */}
       <div className="flex gap-2 mb-4">
         <input
-          className="border p-2 rounded"
+          className="border border-gray-300 dark:border-gray-600 p-2 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
           placeholder="Item Name"
           value={newItem.itemName}
           onChange={(e) => setNewItem({ ...newItem, itemName: e.target.value })}
         />
         <input
           type="number"
-          className="border p-2 rounded"
+          className="border border-gray-300 dark:border-gray-600 p-2 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
           placeholder="Qty"
           value={newItem.quantity}
-          onChange={(e) =>
-            setNewItem({ ...newItem, quantity: Number(e.target.value) })
-          }
+          onChange={(e) => setNewItem({ ...newItem, quantity: Number(e.target.value) })}
         />
         <input
           type="number"
           step="0.01"
-          className="border p-2 rounded"
+          className="border border-gray-300 dark:border-gray-600 p-2 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
           placeholder="Price"
           value={newItem.price}
-          onChange={(e) =>
-            setNewItem({ ...newItem, price: e.target.value })
-          }
+          onChange={(e) => setNewItem({ ...newItem, price: e.target.value })}
         />
         <select
-          className="border p-2 rounded"
+          className="border border-gray-300 dark:border-gray-600 p-2 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
           value={newItem.location}
-          onChange={(e) =>
-            setNewItem({ ...newItem, location: e.target.value })
-          }
+          onChange={(e) => setNewItem({ ...newItem, location: e.target.value })}
         >
           <option value="C-Store">C-Store</option>
           <option value="Restaurant">Restaurant</option>
         </select>
         <button
           onClick={handleAddItem}
-          className="bg-green-500 text-white px-4 py-2 rounded"
+          className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600"
         >
           Add
         </button>
       </div>
 
       {/* Items List */}
-      <table className="w-full border">
+      <table className="w-full border border-gray-300 dark:border-gray-600">
         <thead>
-        <tr className="bg-gray-200">
-          <th className="border p-2">Name</th>
-          <th className="border p-2">Qty</th>
-          <th className="border p-2">Price</th>
-          <th className="border p-2">Location</th>
-          <th className="border p-2">Status</th>
-          <th className="border p-2">Actions</th>
+        <tr className="bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100">
+          <th className="border border-gray-300 dark:border-gray-600 p-2">Name</th>
+          <th className="border border-gray-300 dark:border-gray-600 p-2">Qty</th>
+          <th className="border border-gray-300 dark:border-gray-600 p-2">Price</th>
+          <th className="border border-gray-300 dark:border-gray-600 p-2">Location</th>
+          <th className="border border-gray-300 dark:border-gray-600 p-2">Status</th>
+          <th className="border border-gray-300 dark:border-gray-600 p-2">Actions</th>
         </tr>
         </thead>
         <tbody>
         {items.map((i) => (
           <tr key={i._id} className="text-center">
-            <td className="border p-2">{i.itemName}</td>
-            <td className="border p-2">
+            <td className="border border-gray-300 dark:border-gray-600 p-2">{i.itemName}</td>
+            <td className="border border-gray-300 dark:border-gray-600 p-2">
               <input
                 type="number"
                 value={i.quantity}
-                onChange={(e) =>
-                  handleUpdateItem(i._id, "quantity", Number(e.target.value))
-                }
-                className="border p-1 w-16"
+                onChange={(e) => handleUpdateItem(i._id, "quantity", Number(e.target.value))}
+                className="border border-gray-300 dark:border-gray-600 p-1 w-16 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
               />
             </td>
-            <td className="border p-2">
+            <td className="border border-gray-300 dark:border-gray-600 p-2">
               <input
                 type="number"
                 step="0.01"
                 value={i.price}
-                onChange={(e) =>
-                  handleUpdateItem(i._id, "price", e.target.value)
-                }
-                className="border p-1 w-20"
+                onChange={(e) => handleUpdateItem(i._id, "price", e.target.value)}
+                className="border border-gray-300 dark:border-gray-600 p-1 w-20 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
               />
             </td>
-            <td className="border p-2">
+            <td className="border border-gray-300 dark:border-gray-600 p-2">
               <select
                 value={i.location}
-                onChange={(e) =>
-                  handleUpdateItem(i._id, "location", e.target.value)
-                }
-                className="border p-1"
+                onChange={(e) => handleUpdateItem(i._id, "location", e.target.value)}
+                className="border border-gray-300 dark:border-gray-600 p-1 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
               >
                 <option value="C-Store">C-Store</option>
                 <option value="Restaurant">Restaurant</option>
               </select>
             </td>
-            <td className="border p-2">
+            <td className="border border-gray-300 dark:border-gray-600 p-2">
               <SyncStatusPill status={i.syncStatus} />
             </td>
-            <td className="border p-2">
+            <td className="border border-gray-300 dark:border-gray-600 p-2">
               <button
                 onClick={() => handleDeleteItem(i._id)}
-                className="bg-red-500 text-white px-2 py-1 rounded"
+                className="bg-red-500 text-white px-2 py-1 rounded hover:bg-red-600"
               >
                 Delete
               </button>

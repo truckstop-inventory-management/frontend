@@ -1,56 +1,57 @@
-import React, { useState } from 'react';
+import React, { useState } from "react";
 
-export default function LoginForm({ onLogin }) {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [message, setMessage] = useState(null);
+export default function Login({ onLogin }) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-
-    if (!username || !password) {
-      setMessage('Please enter username and password');
-      return;
-    }
+    setError("");
 
     try {
-      const response = await fetch('https://backend-nlxq.onrender.com/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const res = await fetch("https://backend-nlxq.onrender.com/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password }),
       });
 
-      const data = await response.json();
+      const data = await res.json();
+      console.log("[Login] Response data:", data); // 👈 ADD THIS
 
-      if (!response.ok) {
-        setMessage(data.message || 'Login failed');
-      } else {
-        setMessage('Login successful!');
-        onLogin(data.token);  // Pass token up to parent component
-        setUsername('');
-        setPassword('');
+      if (!res.ok) {
+        setError(data.message || "Login failed");
+        return;
       }
-    } catch (error) {
-      setMessage('Error: ' + error.message);
+
+      localStorage.setItem("token", data.token);
+      onLogin(data.token);
+    } catch (err) {
+      setError("Network error: " + err.message);
     }
   };
 
   return (
     <form onSubmit={handleSubmit}>
-      <h3>Login</h3>
-      {message && <p>{message}</p>}
-      <input
-        type="text"
-        placeholder="Username"
-        value={username}
-        onChange={e => setUsername(e.target.value)}
-      />
-      <input
-        type="password"
-        placeholder="Password"
-        value={password}
-        onChange={e => setPassword(e.target.value)}
-      />
+      <h2>Login</h2>
+      <div>
+        <label>Username:</label>
+        <input
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          required
+        />
+      </div>
+      <div>
+        <label>Password:</label>
+        <input
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          required
+        />
+      </div>
+      {error && <p style={{ color: "red" }}>{error}</p>}
       <button type="submit">Login</button>
     </form>
   );
