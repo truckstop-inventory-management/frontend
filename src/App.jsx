@@ -8,6 +8,7 @@ import InventoryViewToggle from "./components/InventoryViewToggle";
 import InventoryList from "./components/InventoryList";
 import LoginForm from "./components/LoginForm";
 import FloatingButton from './components/FloatingAddButton.jsx';
+import { ToastProvider } from './components/ui/ToastProvider.jsx';
 
 export default function App() {
   const [dbReady, setDbReady] = useState(false);
@@ -47,8 +48,8 @@ export default function App() {
       await syncWithServer();
 
       // Refresh local state
-      const allItems = await getAllItems();
-      setItems(allItems);
+    //   const allItems = await getAllItems();
+    //   setItems(allItems);
     } catch (err) {
       console.error("[App] Error adding item:", err);
     } finally {
@@ -86,56 +87,59 @@ export default function App() {
     const selectedTotal = metrics.totals[selectedView] || 0;
 
     return (
-      <div style={{ paddingTop: 48 }}>
-        {/* Header */}
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            padding: "0 16px",
-            marginBottom: 12,
-            gap: 12,
-            alignItems: "center",
-          }}
-        >
-          <button
-            onClick={() => {
-              setToken(null);
-              localStorage.removeItem("token");
-            }}
-          >
-            Logout
-          </button>
 
-          <InventoryViewToggle
-            value={selectedView}
-            onChange={setSelectedView}
-            counts={metrics.counts}
-          />
-
+      <ToastProvider>
+        <div style={{ paddingTop: 48 }}>
+          {/* Header */}
           <div
             style={{
-              padding: "6px 10px",
-              borderRadius: 999,
-              fontSize: 12,
-              border: "1px solid rgba(0,0,0,.1)",
+              display: "flex",
+              justifyContent: "space-between",
+              padding: "0 16px",
+              marginBottom: 12,
+              gap: 12,
+              alignItems: "center",
             }}
-            title="Total inventory value for current category"
           >
-            {money.format(selectedTotal)}
+            <button
+              onClick={() => {
+                setToken(null);
+                localStorage.removeItem("token");
+              }}
+            >
+              Logout
+            </button>
+
+            <InventoryViewToggle
+              value={selectedView}
+              onChange={setSelectedView}
+              counts={metrics.counts}
+            />
+
+            <div
+              style={{
+                padding: "6px 10px",
+                borderRadius: 999,
+                fontSize: 12,
+                border: "1px solid rgba(0,0,0,.1)",
+              }}
+              title="Total inventory value for current category"
+            >
+              {money.format(selectedTotal)}
+            </div>
           </div>
+
+          <InventoryList
+            token={token}
+            dbReady={dbReady}
+            locationFilter={selectedView}
+            onMetricsChange={handleMetricsChange}
+          />
+
+          {/* Floating + Button */}
+          <FloatingButton onClick={handleAddItem}/>
         </div>
-
-        <InventoryList
-          token={token}
-          dbReady={dbReady}
-          locationFilter={selectedView}
-          onMetricsChange={handleMetricsChange}
-        />
-
-        {/* Floating + Button */}
-        <FloatingButton onClick={handleAddItem}/>
-      </div>
+      </ToastProvider>
     );
   }
 

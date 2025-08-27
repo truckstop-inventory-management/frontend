@@ -1,8 +1,9 @@
-// noinspection GrazieInspection
+// src/components/InventoryList.jsx
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { getAllItems, addItem, updateItem, markItemDeleted } from "../utils/db.js";
 import SyncStatusPill from "../components/SyncStatusPill.jsx";
+import useToast from "../hooks/useToast.js"; // added
 
 const InventoryList = ({ dbReady, onMetricsChange }) => {
   const [items, setItems] = useState([]);
@@ -13,7 +14,36 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
     location: "C-Store",
   });
 
-  // Load items when dbReady changes (not on every items.length change)
+  const toast = useToast();                // added
+  const longPressTimers = useRef({});      // added
+
+  // helper for long-press delete trigger (600ms)
+  const createLongPressHandlers = (id, onConfirm, threshold = 600) => {
+    const start = () => {
+      if (longPressTimers.current[id]) clearTimeout(longPressTimers.current[id]);
+      longPressTimers.current[id] = setTimeout(() => {
+        onConfirm();
+        clearTimeout(longPressTimers.current[id]);
+        delete longPressTimers.current[id];
+      }, Math.max(0, threshold));
+    };
+    const stop = () => {
+      if (longPressTimers.current[id]) {
+        clearTimeout(longPressTimers.current[id]);
+        delete longPressTimers.current[id];
+      }
+    };
+    return {
+      onMouseDown: start,
+      onMouseUp: stop,
+      onMouseLeave: stop,
+      onTouchStart: (e) => { if (e.cancelable) e.preventDefault(); start(); },
+      onTouchEnd: stop,
+      onTouchCancel: stop,
+    };
+  };
+
+  // Load items when dbReady changes
   useEffect(() => {
     if (dbReady) {
       getAllItems().then((data) => {
@@ -50,9 +80,50 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
     setItems(items.map((i) => (i._id === id ? updatedItem : i)));
   };
 
+  // delete with toast + undo (UI-only)
   const handleDeleteItem = async (id) => {
+    const prev = items.find((i) => i._id === id);
+    if (!prev) return;
+
+    // mark deleted locally (existing logic kept: remove from list)
     await markItemDeleted(id);
-    setItems(items.filter((i) => i._id !== id));
+    const next = items.filter((i) => i._id !== id);
+    setItems(next);
+
+    // update metrics after removal
+    const counts = { "C-Store": 0, Restaurant: 0 };
+    const totals = { "C-Store": 0, Restaurant: 0 };
+    next.forEach((i) => {
+      if (i.location && counts[i.location] !== undefined) {
+        counts[i.location]++;
+        totals[i.location] += Number(i.price) * Number(i.quantity);
+      }
+    });
+    onMetricsChange({ counts, totals });
+
+    // show toast with undo: restore row and clear isDeleted
+    toast.show({
+      message: "Item deleted",
+      duration: 5000,
+      onUndo: async () => {
+        // ensure item is reverted locally (set isDeleted:false)
+        const restored = { ...prev, isDeleted: false };
+        await updateItem(restored);
+        // reinsert into state (at front to make it visible immediately)
+        setItems((curr) => [restored, ...curr]);
+
+        // recompute metrics after undo
+        const counts2 = { "C-Store": 0, Restaurant: 0 };
+        const totals2 = { "C-Store": 0, Restaurant: 0 };
+        [restored, ...next].forEach((i) => {
+          if (i.location && counts2[i.location] !== undefined) {
+            counts2[i.location]++;
+            totals2[i.location] += Number(i.price) * Number(i.quantity);
+          }
+        });
+        onMetricsChange({ counts: counts2, totals: totals2 });
+      },
+    });
   };
 
   return (
@@ -111,49 +182,53 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
         </tr>
         </thead>
         <tbody>
-        {items.map((i) => (
-          <tr key={i._id} className="text-center">
-            <td className="border border-gray-300 dark:border-gray-600 p-2">{i.itemName}</td>
-            <td className="border border-gray-300 dark:border-gray-600 p-2">
-              <input
-                type="number"
-                value={i.quantity}
-                onChange={(e) => handleUpdateItem(i._id, "quantity", Number(e.target.value))}
-                className="border border-gray-300 dark:border-gray-600 p-1 w-16 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
-              />
-            </td>
-            <td className="border border-gray-300 dark:border-gray-600 p-2">
-              <input
-                type="number"
-                step="0.01"
-                value={i.price}
-                onChange={(e) => handleUpdateItem(i._id, "price", e.target.value)}
-                className="border border-gray-300 dark:border-gray-600 p-1 w-20 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
-              />
-            </td>
-            <td className="border border-gray-300 dark:border-gray-600 p-2">
-              <select
-                value={i.location}
-                onChange={(e) => handleUpdateItem(i._id, "location", e.target.value)}
-                className="border border-gray-300 dark:border-gray-600 p-1 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
-              >
-                <option value="C-Store">C-Store</option>
-                <option value="Restaurant">Restaurant</option>
-              </select>
-            </td>
-            <td className="border border-gray-300 dark:border-gray-600 p-2">
-              <SyncStatusPill status={i.syncStatus} />
-            </td>
-            <td className="border border-gray-300 dark:border-gray-600 p-2">
-              <button
-                onClick={() => handleDeleteItem(i._id)}
-                className="bg-red-500 text-white px-2 py-1 rounded hover:bg-red-600"
-              >
-                Delete
-              </button>
-            </td>
-          </tr>
-        ))}
+        {items.map((i) => {
+          const longPressHandlers = createLongPressHandlers(i._id, () => handleDeleteItem(i._id));
+          return (
+            <tr key={i._id} className="text-center">
+              <td className="border border-gray-300 dark:border-gray-600 p-2">{i.itemName}</td>
+              <td className="border border-gray-300 dark:border-gray-600 p-2">
+                <input
+                  type="number"
+                  value={i.quantity}
+                  onChange={(e) => handleUpdateItem(i._id, "quantity", Number(e.target.value))}
+                  className="border border-gray-300 dark:border-gray-600 p-1 w-16 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+                />
+              </td>
+              <td className="border border-gray-300 dark:border-gray-600 p-2">
+                <input
+                  type="number"
+                  step="0.01"
+                  value={i.price}
+                  onChange={(e) => handleUpdateItem(i._id, "price", e.target.value)}
+                  className="border border-gray-300 dark:border-gray-600 p-1 w-20 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+                />
+              </td>
+              <td className="border border-gray-300 dark:border-gray-600 p-2">
+                <select
+                  value={i.location}
+                  onChange={(e) => handleUpdateItem(i._id, "location", e.target.value)}
+                  className="border border-gray-300 dark:border-gray-600 p-1 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+                >
+                  <option value="C-Store">C-Store</option>
+                  <option value="Restaurant">Restaurant</option>
+                </select>
+              </td>
+              <td className="border border-gray-300 dark:border-gray-600 p-2">
+                <SyncStatusPill status={i.syncStatus} />
+              </td>
+              <td className="border border-gray-300 dark:border-gray-600 p-2">
+                <button
+                  {...longPressHandlers}
+                  className="bg-red-500 text-white px-2 py-1 rounded hover:bg-red-600"
+                  title="Press and hold to delete"
+                >
+                  Delete
+                </button>
+              </td>
+            </tr>
+          );
+        })}
         </tbody>
       </table>
     </div>
