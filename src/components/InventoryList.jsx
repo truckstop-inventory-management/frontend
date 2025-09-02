@@ -1,7 +1,7 @@
 // src/components/InventoryList.jsx
 
 import React, { useEffect, useState, useRef } from "react";
-import { getAllItems, addItem, updateItem, markItemDeleted } from "../utils/db.js";
+import { getAllItems, addItem, updateItem, markItemDeleted, unmarkItemDeleted } from "../utils/db.js";
 import SyncStatusPill from "../components/SyncStatusPill.jsx";
 import useToast from "../hooks/useToast.js"; // added
 
@@ -85,15 +85,15 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
     const prev = items.find((i) => i._id === id);
     if (!prev) return;
 
-    // mark deleted locally (existing logic kept: remove from list)
     await markItemDeleted(id);
-    const next = items.filter((i) => i._id !== id);
+    const next = items.map((i) => (i._id === id ? { ...i, isDeleted: true } : i));
     setItems(next);
 
-    // update metrics after removal
+    // recompute metrics excluding deleted
+    const visible = next.filter((i) => !i.isDeleted);
     const counts = { "C-Store": 0, Restaurant: 0 };
     const totals = { "C-Store": 0, Restaurant: 0 };
-    next.forEach((i) => {
+    visible.forEach((i) => {
       if (i.location && counts[i.location] !== undefined) {
         counts[i.location]++;
         totals[i.location] += Number(i.price) * Number(i.quantity);
@@ -101,21 +101,19 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
     });
     onMetricsChange({ counts, totals });
 
-    // show toast with undo: restore row and clear isDeleted
+    // toast undo: flip the flag back and restore metrics
     toast.show({
       message: "Item deleted",
       duration: 5000,
       onUndo: async () => {
-        // ensure item is reverted locally (set isDeleted:false)
-        const restored = { ...prev, isDeleted: false };
-        await updateItem(restored);
-        // reinsert into state (at front to make it visible immediately)
-        setItems((curr) => [restored, ...curr]);
+        const restored = await unmarkItemDeleted(id);
+        const restoredState = items.map((i) => (i._id === id ? { ...restored, isDeleted: false } : i));
+        setItems(restoredState);
 
-        // recompute metrics after undo
+        const visible2 = restoredState.filter((i) => !i.isDeleted);
         const counts2 = { "C-Store": 0, Restaurant: 0 };
         const totals2 = { "C-Store": 0, Restaurant: 0 };
-        [restored, ...next].forEach((i) => {
+        visible2.forEach((i) => {
           if (i.location && counts2[i.location] !== undefined) {
             counts2[i.location]++;
             totals2[i.location] += Number(i.price) * Number(i.quantity);
@@ -125,6 +123,7 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
       },
     });
   };
+
 
   return (
     <div className="p-4">
@@ -182,7 +181,7 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
         </tr>
         </thead>
         <tbody>
-        {items.map((i) => {
+        {items.filter(i => !i.isDeleted).map((i) => {
           const longPressHandlers = createLongPressHandlers(i._id, () => handleDeleteItem(i._id));
           return (
             <tr key={i._id} className="text-center">

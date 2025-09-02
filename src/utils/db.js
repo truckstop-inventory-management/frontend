@@ -134,6 +134,27 @@ export async function markItemDeleted(id) {
   return next;
 }
 
+
+export async function unmarkItemDeleted(id) {
+  const db = await initDB();
+  const tx = db.transaction('inventory', 'readwrite');
+  const store = tx.objectStore('inventory');
+  const existing = await store.get(id);
+
+  if (!existing) {
+    return null;
+  }
+
+  const updated = { ...existing, isDeleted: false, lastUpdated: new Date().toISOString() };
+
+  await store.put(updated);
+  await tx.done;
+
+  return updated;
+}
+
+
+
 // Hard delete
 export async function deleteItem(id) {
   const db = await initDB();
@@ -170,6 +191,18 @@ export async function markConflict(id, serverCopy) {
   await tx.done;
   console.log(`[IDB] markConflict -> _id=${id} set to conflict`);
 }
+
+
+// add alongside your other queries
+export async function getLocallyDeletedItems() {
+  const db = await initDB();
+  const tx = db.transaction("items", "readonly");
+  const store = tx.objectStore("items");
+  const all = await store.getAll();
+  await tx.done;
+  return all.filter(i => i.isDeleted === true);
+}
+
 
 // Remap local id to server id
 export async function remapLocalId(oldId, newId, serverDoc = {}) {

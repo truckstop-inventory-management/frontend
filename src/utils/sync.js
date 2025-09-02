@@ -1,3 +1,4 @@
+// src/utils/sync.js
 import { getAllItems, updateItem, deleteItem } from "./db";
 import { fetchWithAuth } from "./fetchWithAuth";
 
@@ -9,7 +10,6 @@ async function deleteOnServer(id) {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
     });
-
     if (!res.ok) {
       console.error(`[SYNC] Failed to delete on server id=${id}`);
     } else {
@@ -24,27 +24,27 @@ export async function syncWithServer() {
   console.log("[SYNC] Starting sync...");
 
   try {
-    // 1. Fetch server inventory
+    // 1) Pull server inventory
     console.log("[SYNC] Fetching server inventory...");
     const serverResponse = await fetchWithAuth(`${API_URL}/inventory`);
     const serverItems = await serverResponse.json();
 
-    // 2. Get local items
-    const localItems = await getAllItems();
+    // 2) Snapshot local items
+    let localItems = await getAllItems();
 
-    // 3. Map server items by key (name + location)
+    // 3) Map server items by (itemName + location) and de-duplicate (keep newest)
     const serverMap = new Map();
-    for (const item of serverItems) {
-      const key = `${item.itemName}-${item.location}`;
-      serverMap.set(key, [...(serverMap.get(key) || []), item]);
+    for (const srv of serverItems) {
+      const k = `${srv.itemName}-${srv.location}`;
+      const arr = serverMap.get(k) || [];
+      arr.push(srv);
+      serverMap.set(k, arr);
     }
 
-    // 4. Deduplicate server items
-    for (const [key, items] of serverMap.entries()) {
-      if (items.length > 1) {
-        items.sort((a, b) => new Date(b.lastUpdated) - new Date(a.lastUpdated));
-        const [keep, ...dups] = items;
-
+    for (const [, list] of serverMap.entries()) {
+      if (list.length > 1) {
+        list.sort((a, b) => new Date(b.lastUpdated) - new Date(a.lastUpdated));
+        const dups = list.slice(1); // first (newest) is implicitly kept
         for (const dup of dups) {
           console.log(
             `[SYNC] Removing duplicate on server "${dup.itemName}" at ${dup.location}`
@@ -60,39 +60,8 @@ export async function syncWithServer() {
       }
     }
 
-    // 5. Sync local with server
-    for (const serverItem of serverItems) {
-      const key = `${serverItem.itemName}-${serverItem.location}`;
-      const localMatch = localItems.find(
-        (i) => `${i.itemName}-${i.location}` === key
-      );
-
-      if (localMatch && localMatch.isDeleted) {
-        console.log(
-          `[SYNC] Skipping re-add of deleted item "${serverItem.itemName}" at ${serverItem.location}`
-        );
-        continue;
-      }
-
-      if (!localMatch) {
-        await updateItem({
-          ...serverItem,
-          syncStatus: "synced",
-        });
-        console.log("[IDB] updateItem =>", serverItem);
-      }
-    }
-
-    console.log("[SYNC] Local items before cleanup:", localItems);
-    for (const item of localItems) {
-      if (item.isDeleted) {
-        await deleteItem(item._id);
-        await deleteOnServer(item._id);
-        continue;
-      }
-    }
-
-    // 6. Sync local with server (after cleanup)
+    // 4) Pre-cleanup merge: add any server items missing locally,
+    //    but do not resurrect things we soft-deleted locally.
     for (const serverItem of serverItems) {
       const key = `${serverItem.itemName}-${serverItem.location}`;
       const localMatch = localItems.find(
@@ -116,38 +85,53 @@ export async function syncWithServer() {
       }
     }
 
-    // 7. Push pending local items
-    for (const item of localItems) {
-      if (item.syncStatus === "pending" && !item.isDeleted) {
+    // 5) Push local deletions (tombstones): delete locally, then delete on server
+    console.log("[SYNC] Local items before cleanup:", localItems);
+    for (const it of localItems) {
+      if (it.isDeleted) {
+        await deleteItem(it._id);
+        await deleteOnServer(it._id);
+      }
+    }
+    // refresh snapshot after local deletions
+    localItems = await getAllItems();
+
+    // 6) Reconcile: if server no longer has an item that is locally 'synced', remove it locally
+    const serverIds = new Set(serverItems.map((s) => s._id));
+    for (const loc of await getAllItems()) {
+      if (loc.syncStatus === "synced" && !serverIds.has(loc._id)) {
+        await deleteItem(loc._id);
+        console.log(`[SYNC] Removed local item ${loc._id} missing on server`);
+      }
+    }
+
+    // 7) Push pending local items (create or update)
+    for (const it of localItems) {
+      if (it.syncStatus === "pending" && !it.isDeleted) {
         try {
           const res = await fetchWithAuth(`${API_URL}/inventory`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(item),
+            body: JSON.stringify(it),
           });
 
           if (res.ok) {
             const saved = await res.json();
-            console.log(
-              `[SYNC] Pushed new item -> ${saved.itemName} (${saved._id})`
-            );
+            console.log(`[SYNC] Pushed new item -> ${saved.itemName} (${saved._id})`);
             await updateItem({ ...saved, syncStatus: "synced", isDeleted: false });
 
-            if (item._id && item._id.startsWith("local_")) {
-              await deleteItem(item._id);
+            if (it._id && String(it._id).startsWith("local_")) {
+              await deleteItem(it._id);
               console.log(
-                `[SYNC] Removed stale local item ${item._id} after successful push`
+                `[SYNC] Removed stale local item ${it._id} after successful push`
               );
             }
           } else if (res.status === 409) {
-            console.warn(
-              "[SYNC] Item exists, updating instead:",
-              item.itemName
-            );
+            console.warn("[SYNC] Item exists, updating instead:", it.itemName);
 
-            const key = `${item.itemName}-${item.location}`;
+            const k = `${it.itemName}-${it.location}`;
             const serverMatch = serverItems.find(
-              (s) => `${s.itemName}-${s.location}` === key
+              (s) => `${s.itemName}-${s.location}` === k
             );
 
             if (serverMatch) {
@@ -156,7 +140,7 @@ export async function syncWithServer() {
                 {
                   method: "PUT",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify(item),
+                  body: JSON.stringify(it),
                 }
               );
 
@@ -171,10 +155,10 @@ export async function syncWithServer() {
                   isDeleted: false,
                 });
 
-                if (item._id && item._id.startsWith("local_")) {
-                  await deleteItem(item._id);
+                if (it._id && String(it._id).startsWith("local_")) {
+                  await deleteItem(it._id);
                   console.log(
-                    `[SYNC] Removed stale local item ${item._id} after conflict resolution`
+                    `[SYNC] Removed stale local item ${it._id} after conflict resolution`
                   );
                 }
               } else {
@@ -191,12 +175,12 @@ export async function syncWithServer() {
           } else {
             console.error(
               "[SYNC] Failed to push pending item",
-              item,
+              it,
               await res.text()
             );
           }
         } catch (err) {
-          console.error("[SYNC] Error pushing pending item", item, err);
+          console.error("[SYNC] Error pushing pending item", it, err);
         }
       }
     }
