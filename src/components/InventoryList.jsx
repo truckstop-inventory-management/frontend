@@ -1,6 +1,6 @@
 // src/components/InventoryList.jsx
 
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import { getAllItems, addItem, updateItem, markItemDeleted, unmarkItemDeleted } from "../utils/db.js";
 import SyncStatusPill from "../components/SyncStatusPill.jsx";
 import useToast from "../hooks/useToast.js"; // added
@@ -24,6 +24,10 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
   // --- low-stock state (+ persistence) ---
   const [showLowStockOnly, setShowLowStockOnly] = useState(false);
   const [lowStockThreshold, setLowStockThreshold] = useState(5);
+
+  // --- edit modal state ---
+  const [isEditOpen, setIsEditOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState(null); // {_id, itemName, quantity, price, location}
 
   const toast = useToast();
   const longPressTimers = useRef({});
@@ -115,19 +119,25 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
   const handleAddItem = async () => {
     if (!newItem.itemName) return;
     const added = await addItem(newItem);
-    setItems([...items, added]);
+    setItems((prev) => [...prev, added]);
     setNewItem({ itemName: "", quantity: 0, price: "", location: "C-Store" });
   };
 
-  const handleUpdateItem = async (id, field, value) => {
-    const updatedItem = items.find((i) => i._id === id);
-    if (!updatedItem) return;
-
-    updatedItem[field] = value;
-
-    await updateItem(updatedItem);
-    setItems(items.map((i) => (i._id === id ? updatedItem : i)));
-  };
+  // ✅ Stable update handler (no 'items' dependency)
+  const handleUpdateItem = useCallback(async (id, field, value) => {
+    let nextItem = null;
+    setItems((prev) => {
+      const updated = prev.map((i) => {
+        if (i._id !== id) return i;
+        nextItem = { ...i, [field]: value };
+        return nextItem;
+      });
+      return updated;
+    });
+    if (nextItem) {
+      await updateItem(nextItem);
+    }
+  }, []);
 
   // delete with toast + undo (UI-only)
   const handleDeleteItem = async (id) => {
@@ -150,7 +160,7 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
     });
     onMetricsChange({ counts, totals });
 
-    // toast undo: flip the flag back and restore metrics
+    // toast undo
     toast.show({
       message: "Item deleted",
       duration: 5000,
@@ -202,7 +212,20 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
     return list;
   })();
 
-  // ⬇️ NEW: tiny dev-only smoke test (does NOT change app state)
+  // totals derived from visibleItems (so filters affect totals display)
+  const { totalsByGroup, totalOverall } = useMemo(() => {
+    const acc = { "C-Store": 0, Restaurant: 0 };
+    for (const it of visibleItems) {
+      const loc = acc[it.location] !== undefined ? it.location : null;
+      const price = Number(it?.price) || 0;
+      const qty = Number(it?.quantity) || 0;
+      if (loc) acc[loc] += price * qty;
+    }
+    const overall = (acc["C-Store"] || 0) + (acc["Restaurant"] || 0);
+    return { totalsByGroup: acc, totalOverall: overall };
+  }, [visibleItems]);
+
+  // dev-only smoke test
   const runLowStockSmoke = () => {
     const th = 5;
     const src = items.filter((i) => !i.isDeleted);
@@ -224,21 +247,62 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
     });
   };
 
+  // --- edit modal handlers ---
+  const openEditModal = (item) => {
+    setEditingItem({
+      _id: item._id,
+      itemName: item.itemName || "",
+      quantity: Number(item.quantity) || 0,
+      price: item.price ?? "",
+      location: item.location || "C-Store",
+    });
+    setIsEditOpen(true);
+  };
+
+  const closeEditModal = () => {
+    setIsEditOpen(false);
+    setEditingItem(null);
+  };
+
+  const onEditField = (field, value) => {
+    setEditingItem((prev) => ({ ...prev, [field]: value }));
+  };
+
+  // Stable save handler; now safe to include in effect deps
+  const saveEditModal = useCallback(async () => {
+    if (!editingItem?._id) return;
+    await handleUpdateItem(editingItem._id, "quantity", Number(editingItem.quantity));
+    await handleUpdateItem(editingItem._id, "price", editingItem.price);
+    await handleUpdateItem(editingItem._id, "location", editingItem.location);
+    closeEditModal();
+  }, [editingItem, handleUpdateItem]);
+
+  // keyboard accessibility for modal
+  useEffect(() => {
+    if (!isEditOpen) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") closeEditModal();
+      if (e.key === "Enter") saveEditModal();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isEditOpen, saveEditModal]);
+
   return (
     <div className="p-4">
       <h2 className="text-xl font-bold mb-4 text-gray-800 dark:text-gray-100">Inventory List</h2>
 
       {/* Add Item */}
-      <div className="flex gap-2 mb-4">
+      <div className="flex gap-2 mb-4 flex-wrap">
         <input
-          className="border border-gray-300 dark:border-gray-600 p-2 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+          className="border border-gray-300 dark:border-gray-600 p-2 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 min-w-[160px]"
           placeholder="Item Name"
           value={newItem.itemName}
           onChange={(e) => setNewItem({ ...newItem, itemName: e.target.value })}
         />
         <input
           type="number"
-          className="border border-gray-300 dark:border-gray-600 p-2 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+          className="border border-gray-300 dark:border-gray-600 p-2 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 w-24"
           placeholder="Qty"
           value={newItem.quantity}
           onChange={(e) => setNewItem({ ...newItem, quantity: Number(e.target.value) })}
@@ -246,7 +310,7 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
         <input
           type="number"
           step="0.01"
-          className="border border-gray-300 dark:border-gray-600 p-2 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+          className="border border-gray-300 dark:border-gray-600 p-2 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 w-28"
           placeholder="Price"
           value={newItem.price}
           onChange={(e) => setNewItem({ ...newItem, price: e.target.value })}
@@ -268,7 +332,7 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
       </div>
 
       {/* Sort & Filter Controls */}
-      <div className="flex flex-wrap items-center gap-3 mb-3">
+      <div className="flex flex-wrap items-center gap-3 gap-y-2 mb-3">
         <div className="flex items-center gap-2">
           <label className="text-sm text-gray-700 dark:text-gray-300">Sort</label>
           <select
@@ -296,7 +360,7 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
             type="checkbox"
             checked={inStockOnly}
             onChange={(e) => setInStockOnly(e.target.checked)}
-            className="h-4 w-4"
+            className="h-5 w-5"
           />
           In-stock only
         </label>
@@ -308,7 +372,7 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
               type="checkbox"
               checked={showLowStockOnly}
               onChange={(e) => setShowLowStockOnly(e.target.checked)}
-              className="h-4 w-4"
+              className="h-5 w-5"
             />
             Low stock only
           </label>
@@ -325,11 +389,33 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
                 const v = parseInt(e.target.value, 10);
                 setLowStockThreshold(Number.isFinite(v) && v >= 0 ? v : 0);
               }}
-              className="border border-gray-300 dark:border-gray-600 p-2 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 w-20"
+              className="border border-gray-300 dark:border-gray-600 p-2 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 w-24"
               aria-label="Low stock threshold"
               title="Show items with quantity ≤ this number"
             />
           </label>
+        </div>
+      </div>
+
+      {/* Totals Summary (respects current filters) */}
+      <div className="mb-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <div className="rounded border border-gray-300 dark:border-gray-600 p-2 bg-gray-50 dark:bg-gray-800/40">
+          <div className="text-xs text-gray-600 dark:text-gray-400">C-Store Total</div>
+          <div className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+            ${totalsByGroup["C-Store"].toFixed(2)}
+          </div>
+        </div>
+        <div className="rounded border border-gray-300 dark:border-gray-600 p-2 bg-gray-50 dark:bg-gray-800/40">
+          <div className="text-xs text-gray-600 dark:text-gray-400">Restaurant Total</div>
+          <div className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+            ${totalsByGroup["Restaurant"].toFixed(2)}
+          </div>
+        </div>
+        <div className="rounded border border-gray-300 dark:border-gray-600 p-2 bg-gray-100 dark:bg-gray-700/50">
+          <div className="text-xs text-gray-700 dark:text-gray-300">Overall Total</div>
+          <div className="text-lg font-bold text-gray-900 dark:text-gray-100">
+            ${totalOverall.toFixed(2)}
+          </div>
         </div>
       </div>
 
@@ -364,14 +450,14 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
                   type="number"
                   step="0.01"
                   value={i.price}
-                  onChange={(e) => handleUpdateItem(i._id, "price", e.target.value)}
+                  onChange={(e) => handleUpdateItem(i._id, "price", e.target.value))}
                   className="border border-gray-300 dark:border-gray-600 p-1 w-20 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
                 />
               </td>
               <td className="border border-gray-300 dark:border-gray-600 p-2">
                 <select
                   value={i.location}
-                  onChange={(e) => handleUpdateItem(i._id, "location", e.target.value)}
+                  onChange={(e) => handleUpdateItem(i._id, "location", e.target.value))}
                   className="border border-gray-300 dark:border-gray-600 p-1 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
                 >
                   <option value="C-Store">C-Store</option>
@@ -381,10 +467,17 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
               <td className="border border-gray-300 dark:border-gray-600 p-2">
                 <SyncStatusPill status={i.syncStatus} />
               </td>
-              <td className="border border-gray-300 dark:border-gray-600 p-2">
+              <td className="border border-gray-300 dark:border-gray-600 p-2 space-x-2">
+                <button
+                  onClick={() => openEditModal(i)}
+                  className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600"
+                  title="Edit item"
+                >
+                  Edit
+                </button>
                 <button
                   {...longPressHandlers}
-                  className="bg-red-500 text-white px-2 py-1 rounded hover:bg-red-600"
+                  className="bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600"
                   title="Press and hold to delete"
                 >
                   Delete
@@ -396,7 +489,7 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
         </tbody>
       </table>
 
-      {/* ⬇️ Dev-only: quick smoke test helper */}
+      {/* Dev-only: quick smoke test helper */}
       {isDev && (
         <div className="mt-3 p-2 border border-dashed border-gray-400 rounded text-sm text-gray-700 dark:text-gray-300">
           <button
@@ -408,6 +501,88 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
           <span className="ml-2 opacity-80">
             (opens console; uses threshold=5 and current items)
           </span>
+        </div>
+      )}
+
+      {/* Edit Item Modal */}
+      {isEditOpen && editingItem && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Edit Item"
+          className="fixed inset-0 z-50 flex items-center justify-center"
+        >
+          {/* backdrop */}
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={closeEditModal}
+          />
+          {/* modal card */}
+          <div className="relative z-10 w-full max-w-md rounded-2xl bg-white dark:bg-gray-900 shadow-xl border border-gray-200 dark:border-gray-700 p-4">
+            <h3 className="text-lg font-semibold mb-3 text-gray-900 dark:text-gray-100">
+              Edit Item
+            </h3>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Name</label>
+                <input
+                  className="w-full border border-gray-300 dark:border-gray-600 rounded p-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+                  value={editingItem.itemName}
+                  onChange={(e) => onEditField("itemName", e.target.value)}
+                />
+              </div>
+
+              <div className="flex gap-2">
+                <div className="flex-1">
+                  <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Quantity</label>
+                  <input
+                    type="number"
+                    className="w-full border border-gray-300 dark:border-gray-600 rounded p-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+                    value={editingItem.quantity}
+                    onChange={(e) => onEditField("quantity", Number(e.target.value))}
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Price</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    className="w-full border border-gray-300 dark:border-gray-600 rounded p-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+                    value={editingItem.price}
+                    onChange={(e) => onEditField("price", e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Location</label>
+                <select
+                  className="w-full border border-gray-300 dark:border-gray-600 rounded p-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+                  value={editingItem.location}
+                  onChange={(e) => onEditField("location", e.target.value)}
+                >
+                  <option value="C-Store">C-Store</option>
+                  <option value="Restaurant">Restaurant</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={closeEditModal}
+                className="px-4 py-2 rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveEditModal}
+                className="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700"
+              >
+                Save
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
