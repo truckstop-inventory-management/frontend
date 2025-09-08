@@ -54,7 +54,7 @@ export async function syncWithServer() {
   try {
     // 1) Pull server inventory
     console.log("[SYNC] Fetching server inventory...");
-    const serverResponse = await fetchWithAuth(`${API_URL}/inventory`);
+    const serverResponse = await fetchWithAuth(`${API_URL}/api/inventory`);
     const serverItems = await jsonIfPossible(serverResponse);
 
     // 2) Snapshot local items
