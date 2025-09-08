@@ -4,10 +4,10 @@ import { fetchWithAuth } from "./fetchWithAuth";
 
 // --- API base setup (safe) ---
 const RAW_API_URL =
-  (import.meta.env && import.meta.env.VITE_API_URL) || window.__API_URL__ || "";
+  (import.meta.env && import.meta.env.VITE_BACKEND_URL) || window.__API_URL__ || "";
 const API_URL = (RAW_API_URL || "").replace(/\/+$/, ""); // strip trailing slashes
 if (!API_URL) {
-  console.warn("[SYNC] VITE_API_URL not set; defaulting to same-origin base ('').");
+  console.warn("[SYNC] VITE_BACKEND_URL not set; defaulting to same-origin base ('').");
 }
 
 // --- Helper: ensure response is JSON ---
