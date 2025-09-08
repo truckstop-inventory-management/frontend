@@ -2,7 +2,35 @@
 import { getAllItems, updateItem, deleteItem } from "./db";
 import { fetchWithAuth } from "./fetchWithAuth";
 
-const API_URL = import.meta.env.VITE_API_URL;
+// --- API base setup (safe) ---
+const RAW_API_URL =
+  (import.meta.env && import.meta.env.VITE_API_URL) || window.__API_URL__ || "";
+const API_URL = (RAW_API_URL || "").replace(/\/+$/, ""); // strip trailing slashes
+if (!API_URL) {
+  console.warn("[SYNC] VITE_API_URL not set; defaulting to same-origin base ('').");
+}
+
+// --- Helper: ensure response is JSON ---
+async function jsonIfPossible(res) {
+  const ct = res.headers.get("content-type") || "";
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(
+      `[SYNC] HTTP ${res.status} ${res.statusText}; URL=${res.url}; BodyStart="${body.slice(
+        0,
+        120
+      )}"`
+    );
+  }
+  if (ct.includes("application/json")) return res.json();
+  const text = await res.text();
+  throw new Error(
+    `[SYNC] Expected JSON but got "${ct}". URL=${res.url}; BodyStart="${text.slice(
+      0,
+      120
+    )}"`
+  );
+}
 
 async function deleteOnServer(id) {
   try {
@@ -27,7 +55,7 @@ export async function syncWithServer() {
     // 1) Pull server inventory
     console.log("[SYNC] Fetching server inventory...");
     const serverResponse = await fetchWithAuth(`${API_URL}/inventory`);
-    const serverItems = await serverResponse.json();
+    const serverItems = await jsonIfPossible(serverResponse);
 
     // 2) Snapshot local items
     let localItems = await getAllItems();
