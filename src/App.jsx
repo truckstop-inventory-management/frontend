@@ -9,6 +9,7 @@ import InventoryList from "./components/InventoryList";
 import LoginForm from "./components/LoginForm";
 import FloatingButton from './components/FloatingAddButton.jsx';
 import { ToastProvider } from './components/ui/ToastProvider.jsx';
+import "./styles/theme.css";
 
 export default function App() {
   const [dbReady, setDbReady] = useState(false);

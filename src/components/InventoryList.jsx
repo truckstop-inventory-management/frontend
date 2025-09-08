@@ -3,9 +3,9 @@
 import React, { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import { getAllItems, addItem, updateItem, markItemDeleted, unmarkItemDeleted } from "../utils/db.js";
 import SyncStatusPill from "../components/SyncStatusPill.jsx";
-import useToast from "../hooks/useToast.js"; // added
+import useToast from "../hooks/useToast.js";
 
-const UI_PREFS_KEY = "tsinv:uiPrefs"; // ⬅️ persist UI choices
+const UI_PREFS_KEY = "tsinv:uiPrefs"; // persist UI choices
 
 const InventoryList = ({ dbReady, onMetricsChange }) => {
   const [items, setItems] = useState([]);
@@ -16,7 +16,7 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
     location: "C-Store",
   });
 
-  // --- sort/filter state (UI-only) ---
+  // --- sort/filter state ---
   const [sortBy, setSortBy] = useState("itemName"); // "itemName" | "quantity" | "price"
   const [sortDir, setSortDir] = useState("asc");    // "asc" | "desc"
   const [inStockOnly, setInStockOnly] = useState(false);
@@ -32,8 +32,15 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
   const toast = useToast();
   const longPressTimers = useRef({});
 
-  // dev-only toggle (load the app as http://.../?dev=1)
-  const isDev = typeof window !== "undefined" && !!(window.location && window.location.search.includes("dev=1"));
+  // modal focus management
+  const modalRef = useRef(null);
+  const firstFieldRef = useRef(null);
+  const openTriggerRef = useRef(null); // stores the button that opened the modal
+
+  // dev-only toggle (load app with ?dev=1)
+  const isDev =
+    typeof window !== "undefined" &&
+    !!(window.location && window.location.search.includes("dev=1"));
 
   // helper for long-press delete trigger (600ms)
   const createLongPressHandlers = (id, onConfirm, threshold = 600) => {
@@ -55,7 +62,10 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
       onMouseDown: start,
       onMouseUp: stop,
       onMouseLeave: stop,
-      onTouchStart: (e) => { if (e.cancelable) e.preventDefault(); start(); },
+      onTouchStart: (e) => {
+        if (e.cancelable) e.preventDefault();
+        start();
+      },
       onTouchEnd: stop,
       onTouchCancel: stop,
     };
@@ -63,22 +73,21 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
 
   // Load items when dbReady changes
   useEffect(() => {
-    if (dbReady) {
-      getAllItems().then((data) => {
-        setItems(data);
+    if (!dbReady) return;
+    getAllItems().then((data) => {
+      setItems(data);
 
-        // update metrics
-        const counts = { "C-Store": 0, Restaurant: 0 };
-        const totals = { "C-Store": 0, Restaurant: 0 };
-        data.forEach((i) => {
-          if (i.location && counts[i.location] !== undefined) {
-            counts[i.location]++;
-            totals[i.location] += Number(i.price) * Number(i.quantity);
-          }
-        });
-        onMetricsChange({ counts, totals });
+      // update metrics
+      const counts = { "C-Store": 0, Restaurant: 0 };
+      const totals = { "C-Store": 0, Restaurant: 0 };
+      data.forEach((i) => {
+        if (i.location && counts[i.location] !== undefined) {
+          counts[i.location]++;
+          totals[i.location] += Number(i.price) * Number(i.quantity);
+        }
       });
-    }
+      onMetricsChange({ counts, totals });
+    });
   }, [dbReady, onMetricsChange]);
 
   // load persisted UI prefs on mount
@@ -87,9 +96,12 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
       const raw = localStorage.getItem(UI_PREFS_KEY);
       if (!raw) return;
       const prefs = JSON.parse(raw);
-      if (typeof prefs.showLowStockOnly === "boolean") setShowLowStockOnly(prefs.showLowStockOnly);
-      if (Number.isFinite(prefs.lowStockThreshold)) setLowStockThreshold(prefs.lowStockThreshold);
-      if (typeof prefs.inStockOnly === "boolean") setInStockOnly(prefs.inStockOnly);
+      if (typeof prefs.showLowStockOnly === "boolean")
+        setShowLowStockOnly(prefs.showLowStockOnly);
+      if (Number.isFinite(prefs.lowStockThreshold))
+        setLowStockThreshold(prefs.lowStockThreshold);
+      if (typeof prefs.inStockOnly === "boolean")
+        setInStockOnly(prefs.inStockOnly);
       if (typeof prefs.sortBy === "string") setSortBy(prefs.sortBy);
       if (typeof prefs.sortDir === "string") setSortDir(prefs.sortDir);
     } catch (err) {
@@ -105,7 +117,9 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
       const merged = {
         ...prev,
         showLowStockOnly,
-        lowStockThreshold: Number.isFinite(lowStockThreshold) ? lowStockThreshold : 5,
+        lowStockThreshold: Number.isFinite(lowStockThreshold)
+          ? lowStockThreshold
+          : 5,
         inStockOnly,
         sortBy,
         sortDir,
@@ -123,7 +137,7 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
     setNewItem({ itemName: "", quantity: 0, price: "", location: "C-Store" });
   };
 
-  // ✅ Stable update handler (no 'items' dependency)
+  // Stable update handler (no 'items' dependency)
   const handleUpdateItem = useCallback(async (id, field, value) => {
     let nextItem = null;
     setItems((prev) => {
@@ -145,7 +159,9 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
     if (!prev) return;
 
     await markItemDeleted(id);
-    const next = items.map((i) => (i._id === id ? { ...i, isDeleted: true } : i));
+    const next = items.map((i) =>
+      i._id === id ? { ...i, isDeleted: true } : i
+    );
     setItems(next);
 
     // recompute metrics excluding deleted
@@ -166,7 +182,9 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
       duration: 5000,
       onUndo: async () => {
         const restored = await unmarkItemDeleted(id);
-        const restoredState = items.map((i) => (i._id === id ? { ...restored, isDeleted: false } : i));
+        const restoredState = items.map((i) =>
+          i._id === id ? { ...restored, isDeleted: false } : i
+        );
         setItems(restoredState);
 
         const visible2 = restoredState.filter((i) => !i.isDeleted);
@@ -198,8 +216,10 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
 
     const dir = sortDir === "desc" ? -1 : 1;
     list = [...list].sort((a, b) => {
-      const av = sortBy === "itemName" ? (a.itemName || "") : Number(a[sortBy] ?? 0);
-      const bv = sortBy === "itemName" ? (b.itemName || "") : Number(b[sortBy] ?? 0);
+      const av =
+        sortBy === "itemName" ? a.itemName || "" : Number(a[sortBy] ?? 0);
+      const bv =
+        sortBy === "itemName" ? b.itemName || "" : Number(b[sortBy] ?? 0);
 
       if (sortBy === "itemName") {
         return av.localeCompare(bv) * dir;
@@ -231,7 +251,9 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
     const src = items.filter((i) => !i.isDeleted);
     const filtered = src.filter((i) => Number(i?.quantity) <= th);
     const ok = filtered.every((i) => Number(i?.quantity) <= th);
-    const sample = filtered.slice(0, 5).map((i) => ({ name: i.itemName, q: i.quantity }));
+    const sample = filtered
+      .slice(0, 5)
+      .map((i) => ({ name: i.itemName, q: i.quantity }));
 
     console.group("[SmokeTest] Low-stock filter");
     console.log("Threshold:", th);
@@ -248,7 +270,11 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
   };
 
   // --- edit modal handlers ---
-  const openEditModal = (item) => {
+  const openEditModal = (item, evt) => {
+    // remember the trigger for focus return
+    if (evt && evt.currentTarget) {
+      openTriggerRef.current = evt.currentTarget;
+    }
     setEditingItem({
       _id: item._id,
       itemName: item.itemName || "",
@@ -262,70 +288,158 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
   const closeEditModal = () => {
     setIsEditOpen(false);
     setEditingItem(null);
+    // return focus to the trigger after close paints
+    setTimeout(() => {
+      if (
+        openTriggerRef.current &&
+        typeof openTriggerRef.current.focus === "function"
+      ) {
+        openTriggerRef.current.focus();
+      }
+    }, 0);
   };
 
   const onEditField = (field, value) => {
     setEditingItem((prev) => ({ ...prev, [field]: value }));
   };
 
-  // Stable save handler; now safe to include in effect deps
+  // Stable save handler; safe to include in deps
   const saveEditModal = useCallback(async () => {
     if (!editingItem?._id) return;
-    await handleUpdateItem(editingItem._id, "quantity", Number(editingItem.quantity));
+    await handleUpdateItem(
+      editingItem._id,
+      "quantity",
+      Number(editingItem.quantity)
+    );
     await handleUpdateItem(editingItem._id, "price", editingItem.price);
     await handleUpdateItem(editingItem._id, "location", editingItem.location);
     closeEditModal();
   }, [editingItem, handleUpdateItem]);
 
-  // keyboard accessibility for modal
+  // focus trap + initial focus inside modal
+  useEffect(() => {
+    if (!isEditOpen) return;
+
+    // Focus first field
+    setTimeout(() => {
+      if (firstFieldRef.current) firstFieldRef.current.focus();
+    }, 0);
+
+    const node = modalRef.current;
+    if (!node) return;
+
+    const selector = [
+      "a[href]",
+      "button:not([disabled])",
+      "input:not([disabled])",
+      "select:not([disabled])",
+      "textarea:not([disabled])",
+      "[tabindex]:not([tabindex='-1'])",
+    ].join(",");
+
+    const getFocusable = () => Array.from(node.querySelectorAll(selector));
+
+    const onKeyDown = (e) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        closeEditModal();
+        return;
+      }
+      if (e.key !== "Tab") return;
+
+      const focusables = getFocusable();
+      if (focusables.length === 0) return;
+
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const current = document.activeElement;
+
+      if (e.shiftKey) {
+        if (current === first || !node.contains(current)) {
+          last.focus();
+          e.preventDefault();
+        }
+      } else {
+        if (current === last) {
+          first.focus();
+          e.preventDefault();
+        }
+      }
+    };
+
+    node.addEventListener("keydown", onKeyDown);
+    return () => node.removeEventListener("keydown", onKeyDown);
+  }, [isEditOpen]);
+
+  // enter-to-save (inputs/selects only)
   useEffect(() => {
     if (!isEditOpen) return;
     const onKey = (e) => {
-      if (e.key === "Escape") closeEditModal();
-      if (e.key === "Enter") saveEditModal();
+      if (e.key === "Enter") {
+        const tag = (document.activeElement?.tagName || "").toLowerCase();
+        if (tag === "input" || tag === "select" || tag === "textarea") {
+          e.preventDefault();
+          saveEditModal();
+        }
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [isEditOpen, saveEditModal]);
 
   return (
-    <div className="p-4">
-      <h2 className="text-xl font-bold mb-4 text-gray-800 dark:text-gray-100">Inventory List</h2>
+    <section aria-labelledby="inv-heading" className="p-4">
+      <h2 id="inv-heading" className="text-xl font-bold mb-4 text-[var(--color-text)]">
+        Inventory List
+      </h2>
 
       {/* Add Item */}
       <div className="flex gap-2 mb-4 flex-wrap">
         <input
-          className="border border-gray-300 dark:border-gray-600 p-2 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 min-w-[160px]"
+          className="focus-ring border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)] min-w-[160px]"
           placeholder="Item Name"
+          aria-label="New item name"
           value={newItem.itemName}
-          onChange={(e) => setNewItem({ ...newItem, itemName: e.target.value })}
+          onChange={(e) =>
+            setNewItem({ ...newItem, itemName: e.target.value })
+          }
         />
         <input
           type="number"
-          className="border border-gray-300 dark:border-gray-600 p-2 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 w-24"
+          className="focus-ring border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)] w-24"
           placeholder="Qty"
+          aria-label="New item quantity"
           value={newItem.quantity}
-          onChange={(e) => setNewItem({ ...newItem, quantity: Number(e.target.value) })}
+          onChange={(e) =>
+            setNewItem({ ...newItem, quantity: Number(e.target.value) })
+          }
         />
         <input
           type="number"
           step="0.01"
-          className="border border-gray-300 dark:border-gray-600 p-2 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 w-28"
+          className="focus-ring border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)] w-28"
           placeholder="Price"
+          aria-label="New item price"
           value={newItem.price}
-          onChange={(e) => setNewItem({ ...newItem, price: e.target.value })}
+          onChange={(e) =>
+            setNewItem({ ...newItem, price: e.target.value })
+          }
         />
         <select
-          className="border border-gray-300 dark:border-gray-600 p-2 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+          className="focus-ring border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)]"
+          aria-label="New item location"
           value={newItem.location}
-          onChange={(e) => setNewItem({ ...newItem, location: e.target.value })}
+          onChange={(e) =>
+            setNewItem({ ...newItem, location: e.target.value })
+          }
         >
           <option value="C-Store">C-Store</option>
           <option value="Restaurant">Restaurant</option>
         </select>
         <button
           onClick={handleAddItem}
-          className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600"
+          aria-label="Add item"
+          className="focus-ring bg-[var(--color-success)] text-white px-4 py-2 rounded hover:bg-[var(--color-success)]"
         >
           Add
         </button>
@@ -334,11 +448,12 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
       {/* Sort & Filter Controls */}
       <div className="flex flex-wrap items-center gap-3 gap-y-2 mb-3">
         <div className="flex items-center gap-2">
-          <label className="text-sm text-gray-700 dark:text-gray-300">Sort</label>
+          <label className="text-sm text-[var(--color-text)]">Sort</label>
           <select
             value={sortBy}
+            aria-label="Sort by"
             onChange={(e) => setSortBy(e.target.value)}
-            className="border border-gray-300 dark:border-gray-600 p-2 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+            className="focus-ring border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)]"
           >
             <option value="itemName">Name</option>
             <option value="quantity">Quantity</option>
@@ -347,37 +462,40 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
 
           <select
             value={sortDir}
+            aria-label="Sort direction"
             onChange={(e) => setSortDir(e.target.value)}
-            className="border border-gray-300 dark:border-gray-600 p-2 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+            className="focus-ring border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)]"
           >
             <option value="asc">Asc</option>
             <option value="desc">Desc</option>
           </select>
         </div>
 
-        <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+        <label className="flex items-center gap-2 text-sm text-[var(--color-text)]">
           <input
             type="checkbox"
             checked={inStockOnly}
             onChange={(e) => setInStockOnly(e.target.checked)}
-            className="h-5 w-5"
+            className="focus-ring h-5 w-5"
+            aria-label="In-stock only"
           />
           In-stock only
         </label>
 
         {/* Low-stock controls */}
         <div className="flex items-center gap-2">
-          <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+          <label className="flex items-center gap-2 text-sm text-[var(--color-text)]">
             <input
               type="checkbox"
               checked={showLowStockOnly}
               onChange={(e) => setShowLowStockOnly(e.target.checked)}
-              className="h-5 w-5"
+              className="focus-ring h-5 w-5"
+              aria-label="Low stock only"
             />
             Low stock only
           </label>
 
-          <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+          <label className="flex items-center gap-2 text-sm text-[var(--color-text)]">
             Threshold:
             <input
               type="number"
@@ -389,7 +507,7 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
                 const v = parseInt(e.target.value, 10);
                 setLowStockThreshold(Number.isFinite(v) && v >= 0 ? v : 0);
               }}
-              className="border border-gray-300 dark:border-gray-600 p-2 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 w-24"
+              className="focus-ring border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)] w-24"
               aria-label="Low stock threshold"
               title="Show items with quantity ≤ this number"
             />
@@ -399,102 +517,119 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
 
       {/* Totals Summary (respects current filters) */}
       <div className="mb-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
-        <div className="rounded border border-gray-300 dark:border-gray-600 p-2 bg-gray-50 dark:bg-gray-800/40">
-          <div className="text-xs text-gray-600 dark:text-gray-400">C-Store Total</div>
-          <div className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+        <div className="rounded border border-[var(--color-border)] p-2 bg-[var(--color-surface-2)]">
+          <div className="text-xs text-[var(--color-muted)]">C-Store Total</div>
+          <div className="text-lg font-semibold text-[var(--color-text)]">
             ${totalsByGroup["C-Store"].toFixed(2)}
           </div>
         </div>
-        <div className="rounded border border-gray-300 dark:border-gray-600 p-2 bg-gray-50 dark:bg-gray-800/40">
-          <div className="text-xs text-gray-600 dark:text-gray-400">Restaurant Total</div>
-          <div className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+        <div className="rounded border border-[var(--color-border)] p-2 bg-[var(--color-surface-2)]">
+          <div className="text-xs text-[var(--color-muted)]">Restaurant Total</div>
+          <div className="text-lg font-semibold text-[var(--color-text)]">
             ${totalsByGroup["Restaurant"].toFixed(2)}
           </div>
         </div>
-        <div className="rounded border border-gray-300 dark:border-gray-600 p-2 bg-gray-100 dark:bg-gray-700/50">
-          <div className="text-xs text-gray-700 dark:text-gray-300">Overall Total</div>
-          <div className="text-lg font-bold text-gray-900 dark:text-gray-100">
+        <div className="rounded border border-[var(--color-border)] p-2 bg-[var(--color-surface-2)]">
+          <div className="text-xs text-[var(--color-text)]/80">Overall Total</div>
+          <div className="text-lg font-bold text-[var(--color-text)]">
             ${totalOverall.toFixed(2)}
           </div>
         </div>
       </div>
 
-      {/* Items List */}
-      <table className="w-full border border-gray-300 dark:border-gray-600">
-        <thead>
-        <tr className="bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100">
-          <th className="border border-gray-300 dark:border-gray-600 p-2">Name</th>
-          <th className="border border-gray-300 dark:border-gray-600 p-2">Qty</th>
-          <th className="border border-gray-300 dark:border-gray-600 p-2">Price</th>
-          <th className="border border-gray-300 dark:border-gray-600 p-2">Location</th>
-          <th className="border border-gray-300 dark:border-gray-600 p-2">Status</th>
-          <th className="border border-gray-300 dark:border-gray-600 p-2">Actions</th>
-        </tr>
-        </thead>
-        <tbody>
-        {visibleItems.map((i) => {
-          const longPressHandlers = createLongPressHandlers(i._id, () => handleDeleteItem(i._id));
-          return (
-            <tr key={i._id} className="text-center">
-              <td className="border border-gray-300 dark:border-gray-600 p-2">{i.itemName}</td>
-              <td className="border border-gray-300 dark:border-gray-600 p-2">
-                <input
-                  type="number"
-                  value={i.quantity}
-                  onChange={(e) => handleUpdateItem(i._id, "quantity", Number(e.target.value))}
-                  className="border border-gray-300 dark:border-gray-600 p-1 w-16 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
-                />
-              </td>
-              <td className="border border-gray-300 dark:border-gray-600 p-2">
-                <input
-                  type="number"
-                  step="0.01"
-                  value={i.price}
-                  onChange={(e) => handleUpdateItem(i._id, "price", e.target.value))}
-                  className="border border-gray-300 dark:border-gray-600 p-1 w-20 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
-                />
-              </td>
-              <td className="border border-gray-300 dark:border-gray-600 p-2">
-                <select
-                  value={i.location}
-                  onChange={(e) => handleUpdateItem(i._id, "location", e.target.value))}
-                  className="border border-gray-300 dark:border-gray-600 p-1 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
-                >
-                  <option value="C-Store">C-Store</option>
-                  <option value="Restaurant">Restaurant</option>
-                </select>
-              </td>
-              <td className="border border-gray-300 dark:border-gray-600 p-2">
-                <SyncStatusPill status={i.syncStatus} />
-              </td>
-              <td className="border border-gray-300 dark:border-gray-600 p-2 space-x-2">
-                <button
-                  onClick={() => openEditModal(i)}
-                  className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600"
-                  title="Edit item"
-                >
-                  Edit
-                </button>
-                <button
-                  {...longPressHandlers}
-                  className="bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600"
-                  title="Press and hold to delete"
-                >
-                  Delete
-                </button>
-              </td>
-            </tr>
-          );
-        })}
-        </tbody>
-      </table>
+      {/* Items List (scrolls horizontally on small screens) */}
+      <div className="overflow-x-auto -mx-4 px-4">
+        <table className="w-full border border-[var(--color-border)]">
+          <thead>
+          <tr className="bg-[var(--color-surface-2)] text-[var(--color-text)]">
+            <th scope="col" className="border border-[var(--color-border)] p-2">Name</th>
+            <th scope="col" className="border border-[var(--color-border)] p-2">Qty</th>
+            <th scope="col" className="border border-[var(--color-border)] p-2">Price</th>
+            <th scope="col" className="border border-[var(--color-border)] p-2">Location</th>
+            <th scope="col" className="border border-[var(--color-border)] p-2">Status</th>
+            <th scope="col" className="border border-[var(--color-border)] p-2">Actions</th>
+          </tr>
+          </thead>
+          <tbody className="text-[var(--color-text)]">
+          {visibleItems.map((i) => {
+            const longPressHandlers = createLongPressHandlers(i._id, () =>
+              handleDeleteItem(i._id)
+            );
+            return (
+              <tr key={i._id} className="text-center">
+                <td className="border border-[var(--color-border)] p-2">
+                  {i.itemName}
+                </td>
+                <td className="border border-[var(--color-border)] p-2">
+                  <input
+                    type="number"
+                    value={i.quantity}
+                    aria-label={`Quantity for ${i.itemName}`}
+                    onChange={(e) =>
+                      handleUpdateItem(i._id, "quantity", Number(e.target.value))
+                    }
+                    className="focus-ring border border-[var(--color-border)] p-1 w-16 bg-[var(--color-surface)] text-[var(--color-text)]"
+                  />
+                </td>
+                <td className="border border-[var(--color-border)] p-2">
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={i.price}
+                    aria-label={`Price for ${i.itemName}`}
+                    onChange={(e) =>
+                      handleUpdateItem(i._id, "price", e.target.value)
+                    }
+                    className="focus-ring border border-[var(--color-border)] p-1 w-20 bg-[var(--color-surface)] text-[var(--color-text)]"
+                  />
+                </td>
+                <td className="border border-[var(--color-border)] p-2">
+                  <select
+                    value={i.location}
+                    aria-label={`Location for ${i.itemName}`}
+                    onChange={(e) =>
+                      handleUpdateItem(i._id, "location", e.target.value)
+                    }
+                    className="focus-ring border border-[var(--color-border)] p-1 bg-[var(--color-surface)] text-[var(--color-text)]"
+                  >
+                    <option value="C-Store">C-Store</option>
+                    <option value="Restaurant">Restaurant</option>
+                  </select>
+                </td>
+                <td className="border border-[var(--color-border)] p-2">
+                  <SyncStatusPill status={i.syncStatus} ariaLabel={`${i.itemName} is ${String(i.syncStatus || 'unknown')}`} />
+                </td>
+                <td className="border border-[var(--color-border)] p-2 space-x-2">
+                  <button
+                    onClick={(e) => openEditModal(i, e)}
+                    className="focus-ring bg-[var(--color-primary)] text-white px-3 py-1 rounded hover:bg-[var(--color-primary)]"
+                    title="Edit item"
+                    aria-label={`Edit ${i.itemName}`}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    {...longPressHandlers}
+                    className="focus-ring bg-[var(--color-danger)] text-white px-3 py-1 rounded hover:bg-[var(--color-danger)]"
+                    title="Press and hold to delete"
+                    aria-label={`Delete ${i.itemName} (press and hold)`}
+                  >
+                    Delete
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
+          </tbody>
+        </table>
+      </div>
 
       {/* Dev-only: quick smoke test helper */}
       {isDev && (
-        <div className="mt-3 p-2 border border-dashed border-gray-400 rounded text-sm text-gray-700 dark:text-gray-300">
+        <div className="mt-3 p-2 border border-dashed border-[var(--color-border)] rounded text-sm text-[var(--color-text)]">
           <button
             onClick={runLowStockSmoke}
-            className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600"
+            className="focus-ring bg-[var(--color-primary)] text-white px-3 py-1 rounded hover:bg-[var(--color-primary)]"
           >
             Run Low-Stock Smoke Test
           </button>
@@ -518,16 +653,23 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
             onClick={closeEditModal}
           />
           {/* modal card */}
-          <div className="relative z-10 w-full max-w-md rounded-2xl bg-white dark:bg-gray-900 shadow-xl border border-gray-200 dark:border-gray-700 p-4">
-            <h3 className="text-lg font-semibold mb-3 text-gray-900 dark:text-gray-100">
+          <div
+            ref={modalRef}
+            className="relative z-10 w-full max-w-md rounded-2xl bg-[var(--color-surface)] shadow-xl border border-[var(--color-border)] p-4
+                       transition transform duration-150 ease-out motion-reduce:transition-none motion-reduce:transform-none"
+          >
+            <h3 className="text-lg font-semibold mb-3 text-[var(--color-text)]">
               Edit Item
             </h3>
 
             <div className="space-y-3">
               <div>
-                <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Name</label>
+                <label className="block text-sm text-[var(--color-text)]/80 mb-1">
+                  Name
+                </label>
                 <input
-                  className="w-full border border-gray-300 dark:border-gray-600 rounded p-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+                  ref={firstFieldRef}
+                  className="focus-ring w-full border border-[var(--color-border)] rounded p-2 bg-[var(--color-surface)] text-[var(--color-text)]"
                   value={editingItem.itemName}
                   onChange={(e) => onEditField("itemName", e.target.value)}
                 />
@@ -535,20 +677,26 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
 
               <div className="flex gap-2">
                 <div className="flex-1">
-                  <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Quantity</label>
+                  <label className="block text-sm text-[var(--color-text)]/80 mb-1">
+                    Quantity
+                  </label>
                   <input
                     type="number"
-                    className="w-full border border-gray-300 dark:border-gray-600 rounded p-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+                    className="focus-ring w-full border border-[var(--color-border)] rounded p-2 bg-[var(--color-surface)] text-[var(--color-text)]"
                     value={editingItem.quantity}
-                    onChange={(e) => onEditField("quantity", Number(e.target.value))}
+                    onChange={(e) =>
+                      onEditField("quantity", Number(e.target.value))
+                    }
                   />
                 </div>
                 <div className="flex-1">
-                  <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Price</label>
+                  <label className="block text-sm text-[var(--color-text)]/80 mb-1">
+                    Price
+                  </label>
                   <input
                     type="number"
                     step="0.01"
-                    className="w-full border border-gray-300 dark:border-gray-600 rounded p-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+                    className="focus-ring w-full border border-[var(--color-border)] rounded p-2 bg-[var(--color-surface)] text-[var(--color-text)]"
                     value={editingItem.price}
                     onChange={(e) => onEditField("price", e.target.value)}
                   />
@@ -556,9 +704,11 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
               </div>
 
               <div>
-                <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">Location</label>
+                <label className="block text-sm text-[var(--color-text)]/80 mb-1">
+                  Location
+                </label>
                 <select
-                  className="w-full border border-gray-300 dark:border-gray-600 rounded p-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+                  className="focus-ring w-full border border-[var(--color-border)] rounded p-2 bg-[var(--color-surface)] text-[var(--color-text)]"
                   value={editingItem.location}
                   onChange={(e) => onEditField("location", e.target.value)}
                 >
@@ -571,13 +721,13 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
             <div className="mt-4 flex justify-end gap-2">
               <button
                 onClick={closeEditModal}
-                className="px-4 py-2 rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
+                className="focus-ring px-4 py-2 rounded border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
               >
                 Cancel
               </button>
               <button
                 onClick={saveEditModal}
-                className="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700"
+                className="focus-ring px-4 py-2 rounded bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary)]"
               >
                 Save
               </button>
@@ -585,7 +735,7 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
           </div>
         </div>
       )}
-    </div>
+    </section>
   );
 };
 

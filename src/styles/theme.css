@@ -1,0 +1,69 @@
+/* src/styles/theme.css */
+/* Tokens mapped to the original Tailwind colors you used, with robust dark-mode support.
+   Dark mode activates if EITHER:
+   - an ancestor has the 'dark' class (html/body/div.dark), OR
+   - the OS is in dark mode (prefers-color-scheme: dark)
+*/
+
+/* ---- Light defaults ----------------------------------------------------- */
+:root {
+    /* Surfaces & borders */
+    --color-surface: #ffffff;     /* bg-white */
+    --color-surface-2: #e5e7eb;   /* gray-200 (table header / subtle surface) */
+    --color-border: #d1d5db;      /* gray-300 */
+    --color-text: #111827;        /* gray-900 */
+    --color-muted: #374151;       /* gray-700 */
+
+    /* Actions & states */
+    --color-primary: #3b82f6;     /* blue-500 */
+    --color-success: #22c55e;     /* green-500 */
+    --color-danger:  #ef4444;     /* red-500 */
+    --color-warning: #f59e0b;     /* amber-500 */
+
+    /* Focus */
+    --focus-ring: #93c5fd;        /* blue-300 */
+}
+
+/* ---- Dark-mode override via class -------------------------------------- */
+.dark,
+html.dark,
+body.dark {
+    --color-surface: #1f2937;     /* gray-800 */
+    --color-surface-2: #374151;   /* gray-700 */
+    --color-border: #4b5563;      /* gray-600 */
+    --color-text: #f3f4f6;        /* gray-100 */
+    --color-muted: #d1d5db;       /* gray-300 */
+
+    /* Keep action hues the same for brand consistency */
+    --color-primary: #3b82f6;     /* blue-500 */
+    --color-success: #22c55e;     /* green-500 */
+    --color-danger:  #ef4444;     /* red-500 */
+    --color-warning: #f59e0b;     /* amber-500 */
+
+    --focus-ring: #3b82f6;        /* blue-500 */
+}
+
+/* ---- Dark-mode override via system setting ------------------------------ */
+@media (prefers-color-scheme: dark) {
+    :root {
+        --color-surface: #1f2937;     /* gray-800 */
+        --color-surface-2: #374151;   /* gray-700 */
+        --color-border: #4b5563;      /* gray-600 */
+        --color-text: #f3f4f6;        /* gray-100 */
+        --color-muted: #d1d5db;       /* gray-300 */
+
+        --color-primary: #3b82f6;     /* blue-500 */
+        --color-success: #22c55e;     /* green-500 */
+        --color-danger:  #ef4444;     /* red-500 */
+        --color-warning: #f59e0b;     /* amber-500 */
+
+        --focus-ring: #3b82f6;        /* blue-500 */
+    }
+}
+
+.focus-ring { outline: none; }
+.focus-ring:focus-visible {
+    /* High-contrast, theme-aware focus ring */
+    box-shadow: 0 0 0 3px var(--focus-ring);
+    border-color: var(--color-primary);
+}
