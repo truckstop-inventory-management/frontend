@@ -32,6 +32,9 @@ async function jsonIfPossible(res) {
   );
 }
 
+// --- NEW: lightweight event bus to broadcast sync state to UI ---
+export const syncBus = new EventTarget();
+
 async function deleteOnServer(id) {
   try {
     const res = await fetchWithAuth(`${API_URL}/inventory/${id}`, {
@@ -50,6 +53,12 @@ async function deleteOnServer(id) {
 
 export async function syncWithServer() {
   console.log("[SYNC] Starting sync...");
+  // --- NEW: notify UI that sync has started
+  try {
+    syncBus.dispatchEvent(new CustomEvent("syncstart"));
+  } catch (_) {
+    // no-op if CustomEvent/EventTarget not available
+  }
 
   try {
     // 1) Pull server inventory
@@ -217,5 +226,14 @@ export async function syncWithServer() {
     console.log("[SYNC] Sync completed successfully");
   } catch (err) {
     console.error("[SYNC] Sync failed:", err);
+  } finally {
+    // --- NEW: notify UI that sync has ended (slight delay to avoid flicker)
+    try {
+      setTimeout(() => {
+        syncBus.dispatchEvent(new CustomEvent("syncend"));
+      }, 120);
+    } catch (_) {
+      // no-op
+    }
   }
 }

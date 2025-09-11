@@ -4,8 +4,28 @@ import React, { useEffect, useState, useRef, useMemo, useCallback } from "react"
 import { getAllItems, addItem, updateItem, markItemDeleted, unmarkItemDeleted } from "../utils/db.js";
 import SyncStatusPill from "../components/SyncStatusPill.jsx";
 import useToast from "../hooks/useToast.js";
+import { syncBus } from "../utils/sync.js";
 
 const UI_PREFS_KEY = "tsinv:uiPrefs"; // persist UI choices
+
+// Inline spinner (kept local to avoid new paths/files)
+function InlineSpinner({ size = 16, label = "Syncing…" }) {
+  return (
+    <div className="inline-flex items-center gap-2" role="status" aria-live="polite">
+      <svg
+        className="animate-spin"
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        aria-hidden="true"
+      >
+        <circle cx="12" cy="12" r="10" className="opacity-20" stroke="currentColor" strokeWidth="4" fill="none" />
+        <path d="M22 12a10 10 0 0 1-10 10" className="opacity-90" stroke="currentColor" strokeWidth="4" fill="none" strokeLinecap="round"/>
+      </svg>
+      <span className="text-sm">{label}</span>
+    </div>
+  );
+}
 
 const InventoryList = ({ dbReady, onMetricsChange }) => {
   const [items, setItems] = useState([]);
@@ -41,6 +61,23 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
   const isDev =
     typeof window !== "undefined" &&
     !!(window.location && window.location.search.includes("dev=1"));
+
+  // --- sync spinner state (listens to syncBus) ---
+  const [isSyncing, setIsSyncing] = useState(false);
+  useEffect(() => {
+    const onStart = () => setIsSyncing(true);
+    const onEnd = () => setIsSyncing(false);
+    try {
+      syncBus.addEventListener("syncstart", onStart);
+      syncBus.addEventListener("syncend", onEnd);
+    } catch (_) {}
+    return () => {
+      try {
+        syncBus.removeEventListener("syncstart", onStart);
+        syncBus.removeEventListener("syncend", onEnd);
+      } catch (_) {}
+    };
+  }, []);
 
   // helper for long-press delete trigger (600ms)
   const createLongPressHandlers = (id, onConfirm, threshold = 600) => {
@@ -177,6 +214,7 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
     onMetricsChange({ counts, totals });
 
     // toast undo
+    const { unmarkItemDeleted: _unused } = { unmarkItemDeleted };
     toast.show({
       message: "Item deleted",
       duration: 5000,
@@ -271,7 +309,6 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
 
   // --- edit modal handlers ---
   const openEditModal = (item, evt) => {
-    // remember the trigger for focus return
     if (evt && evt.currentTarget) {
       openTriggerRef.current = evt.currentTarget;
     }
@@ -288,7 +325,6 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
   const closeEditModal = () => {
     setIsEditOpen(false);
     setEditingItem(null);
-    // return focus to the trigger after close paints
     setTimeout(() => {
       if (
         openTriggerRef.current &&
@@ -303,7 +339,6 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
     setEditingItem((prev) => ({ ...prev, [field]: value }));
   };
 
-  // Stable save handler; safe to include in deps
   const saveEditModal = useCallback(async () => {
     if (!editingItem?._id) return;
     await handleUpdateItem(
@@ -389,49 +424,65 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
 
   return (
     <section aria-labelledby="inv-heading" className="p-4">
-      <h2 id="inv-heading" className="text-xl font-bold mb-4 text-[var(--color-text)]">
-        Inventory List
-      </h2>
+      {/* Header row with right-aligned spinner */}
+      <div className="mb-4 flex items-center justify-between">
+        <h2 id="inv-heading" className="text-xl font-bold text-[var(--color-text)]">
+          Inventory List
+        </h2>
+        {isSyncing ? <InlineSpinner label="Syncing…" /> : null}
+      </div>
 
       {/* Add Item */}
       <div className="flex gap-2 mb-4 flex-wrap">
         <input
-          className="focus-ring border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)] min-w-[160px]"
+          className="border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)] min-w-[160px]
+                     outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
+                     focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
           placeholder="Item Name"
           aria-label="New item name"
           value={newItem.itemName}
           onChange={(e) =>
             setNewItem({ ...newItem, itemName: e.target.value })
           }
+          disabled={isSyncing}
         />
         <input
           type="number"
-          className="focus-ring border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)] w-24"
+          className="border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)] w-24
+                     outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
+                     focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
           placeholder="Qty"
           aria-label="New item quantity"
           value={newItem.quantity}
           onChange={(e) =>
             setNewItem({ ...newItem, quantity: Number(e.target.value) })
           }
+          disabled={isSyncing}
         />
         <input
           type="number"
           step="0.01"
-          className="focus-ring border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)] w-28"
+          className="border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)] w-28
+                     outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
+                     focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
           placeholder="Price"
           aria-label="New item price"
           value={newItem.price}
           onChange={(e) =>
             setNewItem({ ...newItem, price: e.target.value })
           }
+          disabled={isSyncing}
         />
         <select
-          className="focus-ring border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)]"
+          className="border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)]
+                     outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
+                     focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
           aria-label="New item location"
           value={newItem.location}
           onChange={(e) =>
             setNewItem({ ...newItem, location: e.target.value })
           }
+          disabled={isSyncing}
         >
           <option value="C-Store">C-Store</option>
           <option value="Restaurant">Restaurant</option>
@@ -439,7 +490,11 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
         <button
           onClick={handleAddItem}
           aria-label="Add item"
-          className="focus-ring bg-[var(--color-success)] text-white px-4 py-2 rounded hover:bg-[var(--color-success)]"
+          className="bg-[var(--color-success)] text-white px-4 py-2 rounded
+                     outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
+                     focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]
+                     hover:opacity-90 active:opacity-100 disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled={isSyncing}
         >
           Add
         </button>
@@ -453,7 +508,10 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
             value={sortBy}
             aria-label="Sort by"
             onChange={(e) => setSortBy(e.target.value)}
-            className="focus-ring border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)]"
+            className="border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)]
+                       outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
+                       focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
+            disabled={isSyncing}
           >
             <option value="itemName">Name</option>
             <option value="quantity">Quantity</option>
@@ -464,7 +522,10 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
             value={sortDir}
             aria-label="Sort direction"
             onChange={(e) => setSortDir(e.target.value)}
-            className="focus-ring border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)]"
+            className="border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)]
+                       outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
+                       focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
+            disabled={isSyncing}
           >
             <option value="asc">Asc</option>
             <option value="desc">Desc</option>
@@ -476,8 +537,10 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
             type="checkbox"
             checked={inStockOnly}
             onChange={(e) => setInStockOnly(e.target.checked)}
-            className="focus-ring h-5 w-5"
+            className="h-5 w-5 outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
+                       focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
             aria-label="In-stock only"
+            disabled={isSyncing}
           />
           In-stock only
         </label>
@@ -489,8 +552,10 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
               type="checkbox"
               checked={showLowStockOnly}
               onChange={(e) => setShowLowStockOnly(e.target.checked)}
-              className="focus-ring h-5 w-5"
+              className="h-5 w-5 outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
+                         focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
               aria-label="Low stock only"
+              disabled={isSyncing}
             />
             Low stock only
           </label>
@@ -507,9 +572,12 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
                 const v = parseInt(e.target.value, 10);
                 setLowStockThreshold(Number.isFinite(v) && v >= 0 ? v : 0);
               }}
-              className="focus-ring border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)] w-24"
+              className="border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)] w-24
+                         outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
+                         focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
               aria-label="Low stock threshold"
               title="Show items with quantity ≤ this number"
+              disabled={isSyncing}
             />
           </label>
         </div>
@@ -539,25 +607,26 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
 
       {/* Items List (scrolls horizontally on small screens) */}
       <div className="overflow-x-auto -mx-4 px-4">
-        <table className="w-full border border-[var(--color-border)]">
+        <table className="w-full border border-[var(--color-border)] table-auto">
           <thead>
           <tr className="bg-[var(--color-surface-2)] text-[var(--color-text)]">
-            <th scope="col" className="border border-[var(--color-border)] p-2">Name</th>
-            <th scope="col" className="border border-[var(--color-border)] p-2">Qty</th>
-            <th scope="col" className="border border-[var(--color-border)] p-2">Price</th>
-            <th scope="col" className="border border-[var(--color-border)] p-2">Location</th>
-            <th scope="col" className="border border-[var(--color-border)] p-2">Status</th>
-            <th scope="col" className="border border-[var(--color-border)] p-2">Actions</th>
+            <th scope="col" className="border border-[var(--color-border)] p-2 text-left whitespace-nowrap" style={{ width: "1%" }}>
+              Name
+            </th>
+            <th scope="col" className="border border-[var(--color-border)] p-2 w-24">Qty</th>
+            <th scope="col" className="border border-[var(--color-border)] p-2 w-28">Price</th>
+            <th scope="col" className="border border-[var(--color-border)] p-2 w-40">Location</th>
+            <th scope="col" className="border border-[var(--color-border)] p-2 w-32">Status</th>
+            <th scope="col" className="border border-[var(--color-border)] p-2 w-40">Actions</th>
           </tr>
           </thead>
           <tbody className="text-[var(--color-text)]">
-          {visibleItems.map((i) => {
-            const longPressHandlers = createLongPressHandlers(i._id, () =>
-              handleDeleteItem(i._id)
-            );
+          {visibleItems.map((i, idx) => {
+            const longPressHandlers = createLongPressHandlers(i._id, () => handleDeleteItem(i._id));
+            const rowStripe = idx % 2 === 0 ? "bg-transparent" : "bg-[var(--color-surface-2)]";
             return (
-              <tr key={i._id} className="text-center">
-                <td className="border border-[var(--color-border)] p-2">
+              <tr key={i._id} className={`text-center ${rowStripe} hover:bg-[var(--color-surface-2)] transition-colors`}>
+                <td className="border border-[var(--color-border)] p-2 text-left whitespace-nowrap" style={{ width: "1%" }}>
                   {i.itemName}
                 </td>
                 <td className="border border-[var(--color-border)] p-2">
@@ -565,10 +634,11 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
                     type="number"
                     value={i.quantity}
                     aria-label={`Quantity for ${i.itemName}`}
-                    onChange={(e) =>
-                      handleUpdateItem(i._id, "quantity", Number(e.target.value))
-                    }
-                    className="focus-ring border border-[var(--color-border)] p-1 w-16 bg-[var(--color-surface)] text-[var(--color-text)]"
+                    onChange={(e) => handleUpdateItem(i._id, "quantity", Number(e.target.value))}
+                    className="border border-[var(--color-border)] p-1 w-16 bg-[var(--color-surface)] text-[var(--color-text)]
+                                 outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
+                                 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
+                    disabled={isSyncing}
                   />
                 </td>
                 <td className="border border-[var(--color-border)] p-2">
@@ -577,20 +647,22 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
                     step="0.01"
                     value={i.price}
                     aria-label={`Price for ${i.itemName}`}
-                    onChange={(e) =>
-                      handleUpdateItem(i._id, "price", e.target.value)
-                    }
-                    className="focus-ring border border-[var(--color-border)] p-1 w-20 bg-[var(--color-surface)] text-[var(--color-text)]"
+                    onChange={(e) => handleUpdateItem(i._id, "price", e.target.value)}
+                    className="border border-[var(--color-border)] p-1 w-20 bg-[var(--color-surface)] text-[var(--color-text)]
+                                 outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
+                                 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
+                    disabled={isSyncing}
                   />
                 </td>
                 <td className="border border-[var(--color-border)] p-2">
                   <select
                     value={i.location}
                     aria-label={`Location for ${i.itemName}`}
-                    onChange={(e) =>
-                      handleUpdateItem(i._id, "location", e.target.value)
-                    }
-                    className="focus-ring border border-[var(--color-border)] p-1 bg-[var(--color-surface)] text-[var(--color-text)]"
+                    onChange={(e) => handleUpdateItem(i._id, "location", e.target.value)}
+                    className="border border-[var(--color-border)] p-1 bg-[var(--color-surface)] text-[var(--color-text)]
+                                 outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
+                                 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
+                    disabled={isSyncing}
                   >
                     <option value="C-Store">C-Store</option>
                     <option value="Restaurant">Restaurant</option>
@@ -602,17 +674,25 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
                 <td className="border border-[var(--color-border)] p-2 space-x-2">
                   <button
                     onClick={(e) => openEditModal(i, e)}
-                    className="focus-ring bg-[var(--color-primary)] text-white px-3 py-1 rounded hover:bg-[var(--color-primary)]"
+                    className="bg-[var(--color-primary)] text-white px-3 py-1 rounded
+                                 outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
+                                 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]
+                                 hover:opacity-90 active:opacity-100 disabled:opacity-50 disabled:cursor-not-allowed"
                     title="Edit item"
                     aria-label={`Edit ${i.itemName}`}
+                    disabled={isSyncing}
                   >
                     Edit
                   </button>
                   <button
                     {...longPressHandlers}
-                    className="focus-ring bg-[var(--color-danger)] text-white px-3 py-1 rounded hover:bg-[var(--color-danger)]"
+                    className="bg-[var(--color-danger)] text-white px-3 py-1 rounded
+                                 outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
+                                 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]
+                                 hover:opacity-90 active:opacity-100 disabled:opacity-50 disabled:cursor-not-allowed"
                     title="Press and hold to delete"
                     aria-label={`Delete ${i.itemName} (press and hold)`}
+                    disabled={isSyncing}
                   >
                     Delete
                   </button>
@@ -629,7 +709,11 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
         <div className="mt-3 p-2 border border-dashed border-[var(--color-border)] rounded text-sm text-[var(--color-text)]">
           <button
             onClick={runLowStockSmoke}
-            className="focus-ring bg-[var(--color-primary)] text-white px-3 py-1 rounded hover:bg-[var(--color-primary)]"
+            className="px-3 py-1 rounded bg-[var(--color-primary)] text-white
+                       hover:opacity-90 active:opacity-100 disabled:opacity-50 disabled:cursor-not-allowed
+                       outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
+                       focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
+            disabled={isSyncing}
           >
             Run Low-Stock Smoke Test
           </button>
@@ -669,9 +753,12 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
                 </label>
                 <input
                   ref={firstFieldRef}
-                  className="focus-ring w-full border border-[var(--color-border)] rounded p-2 bg-[var(--color-surface)] text-[var(--color-text)]"
+                  className="w-full border border-[var(--color-border)] rounded p-2 bg-[var(--color-surface)] text-[var(--color-text)]
+                             outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
+                             focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
                   value={editingItem.itemName}
                   onChange={(e) => onEditField("itemName", e.target.value)}
+                  disabled={isSyncing}
                 />
               </div>
 
@@ -682,11 +769,14 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
                   </label>
                   <input
                     type="number"
-                    className="focus-ring w-full border border-[var(--color-border)] rounded p-2 bg-[var(--color-surface)] text-[var(--color-text)]"
+                    className="w-full border border-[var(--color-border)] rounded p-2 bg-[var(--color-surface)] text-[var(--color-text)]
+                               outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
+                               focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
                     value={editingItem.quantity}
                     onChange={(e) =>
                       onEditField("quantity", Number(e.target.value))
                     }
+                    disabled={isSyncing}
                   />
                 </div>
                 <div className="flex-1">
@@ -696,9 +786,12 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
                   <input
                     type="number"
                     step="0.01"
-                    className="focus-ring w-full border border-[var(--color-border)] rounded p-2 bg-[var(--color-surface)] text-[var(--color-text)]"
+                    className="w-full border border-[var(--color-border)] rounded p-2 bg-[var(--color-surface)] text-[var(--color-text)]
+                               outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
+                               focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
                     value={editingItem.price}
                     onChange={(e) => onEditField("price", e.target.value)}
+                    disabled={isSyncing}
                   />
                 </div>
               </div>
@@ -708,9 +801,12 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
                   Location
                 </label>
                 <select
-                  className="focus-ring w-full border border-[var(--color-border)] rounded p-2 bg-[var(--color-surface)] text-[var(--color-text)]"
+                  className="w-full border border-[var(--color-border)] rounded p-2 bg-[var(--color-surface)] text-[var(--color-text)]
+                             outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
+                             focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
                   value={editingItem.location}
                   onChange={(e) => onEditField("location", e.target.value)}
+                  disabled={isSyncing}
                 >
                   <option value="C-Store">C-Store</option>
                   <option value="Restaurant">Restaurant</option>
@@ -721,13 +817,20 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
             <div className="mt-4 flex justify-end gap-2">
               <button
                 onClick={closeEditModal}
-                className="focus-ring px-4 py-2 rounded border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                className="px-4 py-2 rounded border border-[var(--color-border)] text-[var(--color-text)]
+                           hover:bg-[var(--color-surface-2)]
+                           outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
+                           focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
               >
                 Cancel
               </button>
               <button
                 onClick={saveEditModal}
-                className="focus-ring px-4 py-2 rounded bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary)]"
+                className="px-4 py-2 rounded bg-[var(--color-primary)] text-white
+                           hover:opacity-90 active:opacity-100 disabled:opacity-50 disabled:cursor-not-allowed
+                           outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
+                           focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
+                disabled={isSyncing}
               >
                 Save
               </button>
