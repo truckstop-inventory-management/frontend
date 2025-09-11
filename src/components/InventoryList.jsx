@@ -27,6 +27,22 @@ function InlineSpinner({ size = 16, label = "Syncing…" }) {
   );
 }
 
+// Tiny spinner for buttons
+function BtnSpinner({ size = 14 }) {
+  return (
+    <svg
+      className="animate-spin mr-2"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="10" className="opacity-20" stroke="currentColor" strokeWidth="4" fill="none" />
+      <path d="M22 12a10 10 0 0 1-10 10" className="opacity-90" stroke="currentColor" strokeWidth="4" fill="none" strokeLinecap="round"/>
+    </svg>
+  );
+}
+
 const InventoryList = ({ dbReady, onMetricsChange }) => {
   const [items, setItems] = useState([]);
   const [newItem, setNewItem] = useState({
@@ -435,7 +451,7 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
       {/* Add Item */}
       <div className="flex gap-2 mb-4 flex-wrap">
         <input
-          className="border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)] min-w-[160px]
+          className="border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)] min-w-[160px] h-10 text-sm
                      outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
                      focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
           placeholder="Item Name"
@@ -448,7 +464,7 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
         />
         <input
           type="number"
-          className="border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)] w-24
+          className="border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)] w-24 h-10 text-sm
                      outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
                      focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
           placeholder="Qty"
@@ -458,11 +474,14 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
             setNewItem({ ...newItem, quantity: Number(e.target.value) })
           }
           disabled={isSyncing}
+          min={0}
+          step={1}
+          inputMode="numeric"
         />
         <input
           type="number"
           step="0.01"
-          className="border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)] w-28
+          className="border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)] w-28 h-10 text-sm
                      outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
                      focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
           placeholder="Price"
@@ -472,9 +491,11 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
             setNewItem({ ...newItem, price: e.target.value })
           }
           disabled={isSyncing}
+          min={0}
+          inputMode="decimal"
         />
         <select
-          className="border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)]
+          className="border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)] h-10 text-sm
                      outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
                      focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
           aria-label="New item location"
@@ -490,12 +511,14 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
         <button
           onClick={handleAddItem}
           aria-label="Add item"
-          className="bg-[var(--color-success)] text-white px-4 py-2 rounded
+          className="bg-[var(--color-success)] text-white px-4 py-2 rounded h-10 text-sm
                      outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
                      focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]
-                     hover:opacity-90 active:opacity-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                     hover:opacity-90 active:opacity-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
           disabled={isSyncing}
+          title="Add Item"
         >
+          {isSyncing ? <BtnSpinner /> : null}
           Add
         </button>
       </div>
@@ -508,10 +531,9 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
             value={sortBy}
             aria-label="Sort by"
             onChange={(e) => setSortBy(e.target.value)}
-            className="border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)]
+            className="border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)] h-10 text-sm
                        outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
                        focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
-            disabled={isSyncing}
           >
             <option value="itemName">Name</option>
             <option value="quantity">Quantity</option>
@@ -522,10 +544,9 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
             value={sortDir}
             aria-label="Sort direction"
             onChange={(e) => setSortDir(e.target.value)}
-            className="border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)]
+            className="border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)] h-10 text-sm
                        outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
                        focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
-            disabled={isSyncing}
           >
             <option value="asc">Asc</option>
             <option value="desc">Desc</option>
@@ -539,10 +560,9 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
             onChange={(e) => setInStockOnly(e.target.checked)}
             className="h-5 w-5 outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
                        focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
-            aria-label="In-stock only"
-            disabled={isSyncing}
+            aria-label="In Stock Only"
           />
-          In-stock only
+          In Stock Only
         </label>
 
         {/* Low-stock controls */}
@@ -554,13 +574,12 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
               onChange={(e) => setShowLowStockOnly(e.target.checked)}
               className="h-5 w-5 outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
                          focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
-              aria-label="Low stock only"
-              disabled={isSyncing}
+              aria-label="Low Stock Only"
             />
-            Low stock only
+            Low Stock Only
           </label>
 
-          <label className="flex items-center gap-2 text-sm text-[var(--color-text)]">
+          <label className="flex items-center gap-2 text-sm text-[var(--color-text)]" title="Show items with quantity at or below this number">
             Threshold:
             <input
               type="number"
@@ -572,12 +591,10 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
                 const v = parseInt(e.target.value, 10);
                 setLowStockThreshold(Number.isFinite(v) && v >= 0 ? v : 0);
               }}
-              className="border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)] w-24
+              className="border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)] w-24 h-10 text-sm
                          outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
                          focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
-              aria-label="Low stock threshold"
-              title="Show items with quantity ≤ this number"
-              disabled={isSyncing}
+              aria-label="Threshold"
             />
           </label>
         </div>
@@ -585,19 +602,19 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
 
       {/* Totals Summary (respects current filters) */}
       <div className="mb-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
-        <div className="rounded border border-[var(--color-border)] p-2 bg-[var(--color-surface-2)]">
+        <div className="rounded border border-[var(--color-border)] p-3 bg-[var(--color-surface-2)]">
           <div className="text-xs text-[var(--color-muted)]">C-Store Total</div>
           <div className="text-lg font-semibold text-[var(--color-text)]">
             ${totalsByGroup["C-Store"].toFixed(2)}
           </div>
         </div>
-        <div className="rounded border border-[var(--color-border)] p-2 bg-[var(--color-surface-2)]">
+        <div className="rounded border border-[var(--color-border)] p-3 bg-[var(--color-surface-2)]">
           <div className="text-xs text-[var(--color-muted)]">Restaurant Total</div>
           <div className="text-lg font-semibold text-[var(--color-text)]">
             ${totalsByGroup["Restaurant"].toFixed(2)}
           </div>
         </div>
-        <div className="rounded border border-[var(--color-border)] p-2 bg-[var(--color-surface-2)]">
+        <div className="rounded border border-[var(--color-border)] p-3 bg-[var(--color-surface-2)]">
           <div className="text-xs text-[var(--color-text)]/80">Overall Total</div>
           <div className="text-lg font-bold text-[var(--color-text)]">
             ${totalOverall.toFixed(2)}
@@ -609,15 +626,15 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
       <div className="overflow-x-auto -mx-4 px-4">
         <table className="w-full border border-[var(--color-border)] table-auto">
           <thead>
-          <tr className="bg-[var(--color-surface-2)] text-[var(--color-text)]">
-            <th scope="col" className="border border-[var(--color-border)] p-2 text-left whitespace-nowrap" style={{ width: "1%" }}>
+          <tr className="bg-[var(--color-surface-2)] text-[var(--color-text)] align-middle">
+            <th scope="col" className="border border-[var(--color-border)] px-2 py-2 text-sm text-left whitespace-nowrap" style={{ width: "1%" }}>
               Name
             </th>
-            <th scope="col" className="border border-[var(--color-border)] p-2 w-24">Qty</th>
-            <th scope="col" className="border border-[var(--color-border)] p-2 w-28">Price</th>
-            <th scope="col" className="border border-[var(--color-border)] p-2 w-40">Location</th>
-            <th scope="col" className="border border-[var(--color-border)] p-2 w-32">Status</th>
-            <th scope="col" className="border border-[var(--color-border)] p-2 w-40">Actions</th>
+            <th scope="col" className="border border-[var(--color-border)] px-2 py-2 text-sm w-24">Qty</th>
+            <th scope="col" className="border border-[var(--color-border)] px-2 py-2 text-sm w-28">Price</th>
+            <th scope="col" className="border border-[var(--color-border)] px-2 py-2 text-sm w-40">Location</th>
+            <th scope="col" className="border border-[var(--color-border)] px-2 py-2 text-sm w-32">Status</th>
+            <th scope="col" className="border border-[var(--color-border)] px-2 py-2 text-sm w-40">Actions</th>
           </tr>
           </thead>
           <tbody className="text-[var(--color-text)]">
@@ -625,41 +642,46 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
             const longPressHandlers = createLongPressHandlers(i._id, () => handleDeleteItem(i._id));
             const rowStripe = idx % 2 === 0 ? "bg-transparent" : "bg-[var(--color-surface-2)]";
             return (
-              <tr key={i._id} className={`text-center ${rowStripe} hover:bg-[var(--color-surface-2)] transition-colors`}>
-                <td className="border border-[var(--color-border)] p-2 text-left whitespace-nowrap" style={{ width: "1%" }}>
+              <tr key={i._id} className={`text-center ${rowStripe} hover:bg-[var(--color-surface-2)] transition-colors align-middle`}>
+                <td className="border border-[var(--color-border)] px-2 py-2 text-sm text-left whitespace-nowrap" style={{ width: "1%" }}>
                   {i.itemName}
                 </td>
-                <td className="border border-[var(--color-border)] p-2">
+                <td className="border border-[var(--color-border)] px-2 py-2 text-sm">
                   <input
                     type="number"
                     value={i.quantity}
                     aria-label={`Quantity for ${i.itemName}`}
                     onChange={(e) => handleUpdateItem(i._id, "quantity", Number(e.target.value))}
-                    className="border border-[var(--color-border)] p-1 w-16 bg-[var(--color-surface)] text-[var(--color-text)]
+                    className="border border-[var(--color-border)] p-1 w-16 h-8 text-sm bg-[var(--color-surface)] text-[var(--color-text)]
                                  outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
                                  focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
                     disabled={isSyncing}
+                    min={0}
+                    step={1}
+                    inputMode="numeric"
                   />
                 </td>
-                <td className="border border-[var(--color-border)] p-2">
+                <td className="border border-[var(--color-border)] px-2 py-2 text-sm">
                   <input
                     type="number"
                     step="0.01"
                     value={i.price}
                     aria-label={`Price for ${i.itemName}`}
                     onChange={(e) => handleUpdateItem(i._id, "price", e.target.value)}
-                    className="border border-[var(--color-border)] p-1 w-20 bg-[var(--color-surface)] text-[var(--color-text)]
+                    className="border border-[var(--color-border)] p-1 w-20 h-8 text-sm bg-[var(--color-surface)] text-[var(--color-text)]
                                  outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
                                  focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
                     disabled={isSyncing}
+                    min={0}
+                    inputMode="decimal"
                   />
                 </td>
-                <td className="border border-[var(--color-border)] p-2">
+                <td className="border border-[var(--color-border)] px-2 py-2 text-sm">
                   <select
                     value={i.location}
                     aria-label={`Location for ${i.itemName}`}
                     onChange={(e) => handleUpdateItem(i._id, "location", e.target.value)}
-                    className="border border-[var(--color-border)] p-1 bg-[var(--color-surface)] text-[var(--color-text)]
+                    className="border border-[var(--color-border)] p-1 h-8 text-sm bg-[var(--color-surface)] text-[var(--color-text)]
                                  outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
                                  focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
                     disabled={isSyncing}
@@ -668,17 +690,16 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
                     <option value="Restaurant">Restaurant</option>
                   </select>
                 </td>
-                <td className="border border-[var(--color-border)] p-2">
+                <td className="border border-[var(--color-border)] px-2 py-2 text-sm">
                   <SyncStatusPill status={i.syncStatus} ariaLabel={`${i.itemName} is ${String(i.syncStatus || 'unknown')}`} />
                 </td>
-                <td className="border border-[var(--color-border)] p-2 space-x-2">
+                <td className="border border-[var(--color-border)] px-2 py-2 text-sm space-x-2">
                   <button
                     onClick={(e) => openEditModal(i, e)}
-                    className="bg-[var(--color-primary)] text-white px-3 py-1 rounded
+                    className="bg-[var(--color-primary)] text-white px-3 py-1 rounded h-8 text-sm min-w-[72px]
                                  outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
-                                 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]
-                                 hover:opacity-90 active:opacity-100 disabled:opacity-50 disabled:cursor-not-allowed"
-                    title="Edit item"
+                                 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
+                    title="Edit Item"
                     aria-label={`Edit ${i.itemName}`}
                     disabled={isSyncing}
                   >
@@ -686,11 +707,10 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
                   </button>
                   <button
                     {...longPressHandlers}
-                    className="bg-[var(--color-danger)] text-white px-3 py-1 rounded
+                    className="bg-[var(--color-danger)] text-white px-3 py-1 rounded h-8 text-sm min-w-[72px]
                                  outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
-                                 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]
-                                 hover:opacity-90 active:opacity-100 disabled:opacity-50 disabled:cursor-not-allowed"
-                    title="Press and hold to delete"
+                                 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
+                    title="Delete Item (Press and Hold)"
                     aria-label={`Delete ${i.itemName} (press and hold)`}
                     disabled={isSyncing}
                   >
@@ -714,6 +734,7 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
                        outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
                        focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
             disabled={isSyncing}
+            title="Run Low-Stock Smoke Test"
           >
             Run Low-Stock Smoke Test
           </button>
@@ -728,7 +749,7 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
         <div
           role="dialog"
           aria-modal="true"
-          aria-label="Edit Item"
+          aria-labelledby="edit-item-title"
           className="fixed inset-0 z-50 flex items-center justify-center"
         >
           {/* backdrop */}
@@ -742,18 +763,19 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
             className="relative z-10 w-full max-w-md rounded-2xl bg-[var(--color-surface)] shadow-xl border border-[var(--color-border)] p-4
                        transition transform duration-150 ease-out motion-reduce:transition-none motion-reduce:transform-none"
           >
-            <h3 className="text-lg font-semibold mb-3 text-[var(--color-text)]">
+            <h3 id="edit-item-title" className="text-lg font-semibold mb-3 text-[var(--color-text)]">
               Edit Item
             </h3>
 
             <div className="space-y-3">
               <div>
-                <label className="block text-sm text-[var(--color-text)]/80 mb-1">
+                <label htmlFor="edit-name" className="block text-sm text-[var(--color-text)]/80 mb-1">
                   Name
                 </label>
                 <input
+                  id="edit-name"
                   ref={firstFieldRef}
-                  className="w-full border border-[var(--color-border)] rounded p-2 bg-[var(--color-surface)] text-[var(--color-text)]
+                  className="w-full border border-[var(--color-border)] rounded p-2 h-10 text-sm bg-[var(--color-surface)] text-[var(--color-text)]
                              outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
                              focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
                   value={editingItem.itemName}
@@ -764,12 +786,13 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
 
               <div className="flex gap-2">
                 <div className="flex-1">
-                  <label className="block text-sm text-[var(--color-text)]/80 mb-1">
+                  <label htmlFor="edit-qty" className="block text-sm text-[var(--color-text)]/80 mb-1">
                     Quantity
                   </label>
                   <input
+                    id="edit-qty"
                     type="number"
-                    className="w-full border border-[var(--color-border)] rounded p-2 bg-[var(--color-surface)] text-[var(--color-text)]
+                    className="w-full border border-[var(--color-border)] rounded p-2 h-10 text-sm bg-[var(--color-surface)] text-[var(--color-text)]
                                outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
                                focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
                     value={editingItem.quantity}
@@ -780,13 +803,14 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
                   />
                 </div>
                 <div className="flex-1">
-                  <label className="block text-sm text-[var(--color-text)]/80 mb-1">
+                  <label htmlFor="edit-price" className="block text-sm text-[var(--color-text)]/80 mb-1">
                     Price
                   </label>
                   <input
+                    id="edit-price"
                     type="number"
                     step="0.01"
-                    className="w-full border border-[var(--color-border)] rounded p-2 bg-[var(--color-surface)] text-[var(--color-text)]
+                    className="w-full border border-[var(--color-border)] rounded p-2 h-10 text-sm bg-[var(--color-surface)] text-[var(--color-text)]
                                outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
                                focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
                     value={editingItem.price}
@@ -797,11 +821,12 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
               </div>
 
               <div>
-                <label className="block text-sm text-[var(--color-text)]/80 mb-1">
+                <label htmlFor="edit-location" className="block text-sm text-[var(--color-text)]/80 mb-1">
                   Location
                 </label>
                 <select
-                  className="w-full border border-[var(--color-border)] rounded p-2 bg-[var(--color-surface)] text-[var(--color-text)]
+                  id="edit-location"
+                  className="w-full border border-[var(--color-border)] rounded p-2 h-10 text-sm bg-[var(--color-surface)] text-[var(--color-text)]
                              outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
                              focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
                   value={editingItem.location}
@@ -817,21 +842,24 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
             <div className="mt-4 flex justify-end gap-2">
               <button
                 onClick={closeEditModal}
-                className="px-4 py-2 rounded border border-[var(--color-border)] text-[var(--color-text)]
+                className="px-4 py-2 rounded border border-[var(--color-border)] text-[var(--color-text)] h-10 text-sm min-w-[84px]
                            hover:bg-[var(--color-surface-2)]
                            outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
                            focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
+                title="Cancel Changes"
               >
                 Cancel
               </button>
               <button
                 onClick={saveEditModal}
-                className="px-4 py-2 rounded bg-[var(--color-primary)] text-white
+                className="px-4 py-2 rounded bg-[var(--color-primary)] text-white h-10 text-sm min-w-[84px] flex items-center
                            hover:opacity-90 active:opacity-100 disabled:opacity-50 disabled:cursor-not-allowed
                            outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
                            focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
                 disabled={isSyncing}
+                title="Save Changes"
               >
+                {isSyncing ? <BtnSpinner /> : null}
                 Save
               </button>
             </div>

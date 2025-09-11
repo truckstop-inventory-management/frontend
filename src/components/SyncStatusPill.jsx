@@ -1,113 +1,102 @@
 // src/components/SyncStatusPill.jsx
+import React from "react";
 
-import React, { useEffect, useRef, useState } from "react";
-
-/**
- * Displays a small colored pill for sync status.
- * - Uses theme.css tokens (var(--color-success|warning|danger|muted))
- * - Accessible: keyboard focusable, ARIA label, tooltip on hover/focus/tap
- *
- * Props:
- *   - status: "synced" | "pending" | "conflict" | string
- *   - ariaLabel?: optional custom label for screen readers
- */
-const SyncStatusPill = ({ status, ariaLabel }) => {
-  const normalized = String(status || "").toLowerCase();
-
-  const config = (() => {
-    switch (normalized) {
-      case "synced":
-        return {
-          label: "synced",
-          sr: "Synced with server",
-          bgVar: "var(--color-success)",
-          legend: "Saved on server",
-        };
-      case "pending":
-        return {
-          label: "pending",
-          sr: "Pending sync",
-          bgVar: "var(--color-warning)",
-          legend: "Waiting to sync",
-        };
-      case "conflict":
-        return {
-          label: "conflict",
-          sr: "Conflict. Needs attention",
-          bgVar: "var(--color-danger)",
-          legend: "Needs attention (version conflict)",
-        };
-      default:
-        return {
-          label: normalized || "unknown",
-          sr: "Unknown sync status",
-          bgVar: "var(--color-muted)",
-          legend: "Status unknown",
-        };
-    }
-  })();
-
-  // Tooltip visibility (for touch + keyboard focus)
-  const [showLegend, setShowLegend] = useState(false);
-  const hideTimer = useRef(null);
-
-  const openLegend = () => {
-    setShowLegend(true);
-    if (hideTimer.current) clearTimeout(hideTimer.current);
-    hideTimer.current = setTimeout(() => setShowLegend(false), 2000);
-  };
-
-  const closeLegend = () => {
-    if (hideTimer.current) clearTimeout(hideTimer.current);
-    setShowLegend(false);
-  };
-
-  useEffect(() => () => hideTimer.current && clearTimeout(hideTimer.current), []);
-
-  const handleKeyDown = (e) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      openLegend();
-    }
-  };
-
-  const a11yLabel = ariaLabel || config.sr;
-
-  return (
-    <span className="relative inline-flex items-center justify-center group">
-      {/* Pill (focusable for keyboard; announces via aria-label) */}
-      <span
-        role="status"
-        aria-label={a11yLabel}
-        tabIndex={0}
-        onFocus={openLegend}
-        onBlur={closeLegend}
-        onMouseEnter={() => setShowLegend(true)}
-        onMouseLeave={closeLegend}
-        onTouchStart={(e) => {
-          if (e.cancelable) e.preventDefault();
-          openLegend();
-        }}
-        onKeyDown={handleKeyDown}
-        className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium text-white focus-ring cursor-default"
-        style={{ backgroundColor: config.bgVar }}
-      >
-        {config.label}
-      </span>
-
-      {/* Legend (tooltip) */}
-      <span
-        className={`pointer-events-none absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-md px-2 py-1 text-[10px] leading-none
-                    border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]
-                    shadow transition-opacity duration-150
-                    ${showLegend ? "opacity-100" : "opacity-0"}
-                    group-hover:opacity-100 group-focus:opacity-100`}
-        role="tooltip"
-      >
-        {config.legend}
-      </span>
-    </span>
-  );
+const STATUS_STYLES = {
+  synced:
+    "bg-[var(--pill-bg-success)] text-[var(--pill-fg-success)] border-[var(--pill-border-success)]",
+  syncing:
+    "bg-[var(--pill-bg-info)] text-[var(--pill-fg-info)] border-[var(--pill-border-info)]",
+  pending:
+    "bg-[var(--pill-bg-warning)] text-[var(--pill-fg-warning)] border-[var(--pill-border-warning)]",
+  error:
+    "bg-[var(--pill-bg-danger)] text-[var(--pill-fg-danger)] border-[var(--pill-border-danger)]",
+  unknown:
+    "bg-[var(--pill-bg-muted)] text-[var(--pill-fg-muted)] border-[var(--pill-border-muted)]",
 };
 
-export default SyncStatusPill;
+function normalize(status) {
+  const key = String(status || "").toLowerCase();
+  if (STATUS_STYLES[key]) return key;
+  return "unknown";
+}
+
+export default function SyncStatusPill({ status, ariaLabel }) {
+  const key = normalize(status);
+  const cls = STATUS_STYLES[key] || STATUS_STYLES.unknown;
+
+  return (
+    <span
+      className={
+        "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap " +
+        cls
+      }
+      aria-label={ariaLabel}
+      title={String(status || "unknown")}
+    >
+      {key === "synced" && (
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          className="mr-1"
+          aria-hidden="true"
+        >
+          <path
+            d="M20 6L9 17l-5-5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      )}
+      {key === "syncing" && (
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          className="mr-1 animate-spin"
+          aria-hidden="true"
+        >
+          <circle
+            cx="12"
+            cy="12"
+            r="10"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="3"
+            className="opacity-25"
+          />
+          <path
+            d="M22 12a10 10 0 0 1-10 10"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="3"
+            strokeLinecap="round"
+            className="opacity-90"
+          />
+        </svg>
+      )}
+      {key === "error" && (
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          className="mr-1"
+          aria-hidden="true"
+        >
+          <path
+            d="M12 9v4m0 4h.01M12 2a10 10 0 1 0 .001 20.001A10 10 0 0 0 12 2z"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      )}
+      {key.charAt(0).toUpperCase() + key.slice(1)}
+    </span>
+  );
+}

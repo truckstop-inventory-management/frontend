@@ -2,7 +2,9 @@
 //
 // Lightweight toast system with optional Undo action.
 // API: toast.show({ message, duration, onUndo, ariaLive, focusUndo })
-// This version avoids JSX so it can live in a .js file.
+// - Undo is a real <button> (tabbable) with optional auto-focus.
+// - Includes an offscreen ARIA live region that mirrors the latest toast message.
+// - No JSX (safe to keep .js extension).
 
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -97,16 +99,71 @@ export default function useToast() {
 // -------------------------------
 function ToastHost() {
   const [list, setList] = useState(toasts);
+
+  // For live region mirroring
+  const [liveMsg, setLiveMsg] = useState("");
+  const [liveMode, setLiveMode] = useState("polite");
+  const clearTimerRef = useRef(null);
+
   useEffect(() => subscribe(setList), []);
 
+  // Whenever the list changes, announce the latest toast message
+  useEffect(() => {
+    if (!list || list.length === 0) return;
+
+    const latest = list[list.length - 1];
+    // Update live region text and mode
+    setLiveMode(latest.ariaLive || "polite");
+    setLiveMsg(latest.message || "");
+
+    // Clear message shortly after to allow repeat announcements
+    if (clearTimerRef.current) clearTimeout(clearTimerRef.current);
+    clearTimerRef.current = setTimeout(() => setLiveMsg(""), 2500);
+
+    return () => {
+      if (clearTimerRef.current) {
+        clearTimeout(clearTimerRef.current);
+        clearTimerRef.current = null;
+      }
+    };
+  }, [list]);
+
+  // Offscreen styles for accessible-only content
+  const srOnlyStyle = {
+    position: "absolute",
+    width: "1px",
+    height: "1px",
+    padding: 0,
+    margin: "-1px",
+    overflow: "hidden",
+    clip: "rect(0, 0, 0, 0)",
+    whiteSpace: "nowrap",
+    border: 0,
+  };
+
   return h(
-    "div",
-    {
-      "aria-live": "off",
-      className:
-        "pointer-events-none fixed bottom-4 right-4 z-[9999] flex flex-col gap-2",
-    },
-    list.map((t) => h(ToastItem, { key: t.id, toast: t }))
+    React.Fragment,
+    null,
+    // Visual toasts stack (clickable)
+    h(
+      "div",
+      {
+        "aria-live": "off",
+        className:
+          "pointer-events-none fixed bottom-4 right-4 z-[9999] flex flex-col gap-2",
+      },
+      list.map((t) => h(ToastItem, { key: t.id, toast: t }))
+    ),
+    // Offscreen live region that mirrors latest message
+    h(
+      "div",
+      {
+        style: srOnlyStyle,
+        "aria-live": liveMode,
+        "aria-atomic": "true",
+      },
+      liveMsg
+    )
   );
 }
 
