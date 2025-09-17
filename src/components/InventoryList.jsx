@@ -17,11 +17,14 @@ import ItemsTable from "./inventory/ItemsTable.jsx";
 import EditItemModal from "./inventory/EditItemModal.jsx";
 import { createLongPressHandlers } from "../utils/createLongPressHandlers.js";
 import { runLowStockSmoke } from "../utils/runLowStockSmoke.js";
+import useInstallPrompt from '../hooks/useInstallPrompt.js';
 
 const InventoryList = ({ dbReady, onMetricsChange }) => {
   const [items, setItems] = useState([]);
 
   const { newItem, setNewItem, addNewItem } = useAddItem();     // ✅ use hook
+
+  const { canInstall, promptInstall } = useInstallPrompt();
 
   const {
     sortBy, setSortBy,
@@ -196,12 +199,20 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
 
   return (
     <section aria-labelledby="inv-heading" className="p-4">
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-4 flex items-center justify-between gap-2">
         <h2 id="inv-heading" className="text-xl font-bold text-[var(--color-text)]">
           Inventory List
         </h2>
-        {isSyncing ? <InlineSpinner label="Syncing…" /> : null}
-      </div>
+        {canInstall && (
+          <button
+            onClick={promptInstall}
+            className="px-3 py-1 rounded bg-[var(--color-primary)] text-white"
+          >
+            Install App
+          </button>
+        )}
+          {isSyncing ? <InlineSpinner label="Syncing…" /> : null}
+        </div>
 
       <AddItemForm
         newItem={newItem}
