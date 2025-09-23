@@ -17,13 +17,12 @@ import ItemsTable from "./inventory/ItemsTable.jsx";
 import EditItemModal from "./inventory/EditItemModal.jsx";
 import { createLongPressHandlers } from "../utils/createLongPressHandlers.js";
 import { runLowStockSmoke } from "../utils/runLowStockSmoke.js";
-import useInstallPrompt from '../hooks/useInstallPrompt.js';
+import useInstallPrompt from "../hooks/useInstallPrompt.js";
 
 const InventoryList = ({ dbReady, onMetricsChange }) => {
   const [items, setItems] = useState([]);
 
-  const { newItem, setNewItem, addNewItem } = useAddItem();     // ✅ use hook
-
+  const { newItem, setNewItem, addNewItem } = useAddItem();
   const { canInstall, promptInstall } = useInstallPrompt();
 
   const {
@@ -50,6 +49,22 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
 
   const isSyncing = useSyncSpinner();
 
+  // 🛠 TEMP iOS FIX — clear persisted UI prefs on first native run to avoid hidden filters
+  useEffect(() => {
+    try {
+      const key = "tsinv:uiPrefs";
+      if (localStorage.getItem(key)) {
+        localStorage.removeItem(key);
+        console.log("[DEBUG/iOS] Cleared", key, "to avoid hidden filters on first native run.");
+      } else {
+        console.log("[DEBUG/iOS] No uiPrefs found; nothing to clear.");
+      }
+    } catch (e) {
+      console.warn("[DEBUG/iOS] Could not access localStorage:", e);
+    }
+  }, []);
+
+  // Load current items from IDB once DB is ready
   useEffect(() => {
     if (!dbReady) return;
     getAllItems().then((data) => {
@@ -66,6 +81,19 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
       onMetricsChange({ counts, totals });
     });
   }, [dbReady, onMetricsChange]);
+
+  // ✅ NEW: When syncing finishes (first launch or later), refresh items from IDB
+  const wasSyncingRef = useRef(false);
+  useEffect(() => {
+    // detect falling edge: true -> false
+    if (wasSyncingRef.current && !isSyncing) {
+      // give the sync writer a tick to finish transactions
+      setTimeout(() => {
+        getAllItems().then((data) => setItems(data));
+      }, 50);
+    }
+    wasSyncingRef.current = isSyncing;
+  }, [isSyncing]);
 
   const handleUpdateItem = useCallback(async (id, field, value) => {
     let nextItem = null;
@@ -142,6 +170,15 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
 
   const { totalsByGroup, totalOverall } = useTotals(visibleItems);
 
+  // 🛠 TEMP DEBUG — log raw vs visible item counts
+  console.log(
+    "[DEBUG/iOS] counts",
+    {
+      rawItems: Array.isArray(items) ? items.length : "(n/a)",
+      visibleItems: Array.isArray(visibleItems) ? visibleItems.length : "(n/a)"
+    }
+  );
+
   const handleRunLowStockSmoke = () => {
     runLowStockSmoke(items, toast, { threshold: 5 });
   };
@@ -211,8 +248,15 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
             Install App
           </button>
         )}
-          {isSyncing ? <InlineSpinner label="Syncing…" /> : null}
-        </div>
+        {isSyncing ? <InlineSpinner label="Syncing…" /> : null}
+      </div>
+
+      {/* 🛠 TEMP DEBUG PANEL */}
+      <div style={{ padding: 8, fontSize: 12, color: "#90a4ae" }}>
+        <div><b>Debug</b></div>
+        <div>Raw items: {Array.isArray(items) ? items.length : 0}</div>
+        <div>Visible items: {Array.isArray(visibleItems) ? visibleItems.length : 0}</div>
+      </div>
 
       <AddItemForm
         newItem={newItem}
