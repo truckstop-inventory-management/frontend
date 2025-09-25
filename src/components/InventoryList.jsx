@@ -18,6 +18,7 @@ import EditItemModal from "./inventory/EditItemModal.jsx";
 import { createLongPressHandlers } from "../utils/createLongPressHandlers.js";
 import { runLowStockSmoke } from "../utils/runLowStockSmoke.js";
 import useInstallPrompt from "../hooks/useInstallPrompt.js";
+import OfflineBanner from "./OfflineBanner.jsx"; // ✅ mount the banner
 
 const InventoryList = ({ dbReady, onMetricsChange }) => {
   const [items, setItems] = useState([]);
@@ -82,12 +83,10 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
     });
   }, [dbReady, onMetricsChange]);
 
-  // ✅ NEW: When syncing finishes (first launch or later), refresh items from IDB
+  // When syncing finishes, refresh items
   const wasSyncingRef = useRef(false);
   useEffect(() => {
-    // detect falling edge: true -> false
     if (wasSyncingRef.current && !isSyncing) {
-      // give the sync writer a tick to finish transactions
       setTimeout(() => {
         getAllItems().then((data) => setItems(data));
       }, 50);
@@ -110,8 +109,8 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
     }
   }, []);
 
-  const handleAddItem = async () => {
-    const added = await addNewItem();
+  const handleAddItem = async (payload) => {
+    const added = await addNewItem(payload);
     if (added) setItems((prev) => [...prev, added]);
   };
 
@@ -170,20 +169,17 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
 
   const { totalsByGroup, totalOverall } = useTotals(visibleItems);
 
-  // 🛠 TEMP DEBUG — log raw vs visible item counts
-  console.log(
-    "[DEBUG/iOS] counts",
-    {
-      rawItems: Array.isArray(items) ? items.length : "(n/a)",
-      visibleItems: Array.isArray(visibleItems) ? visibleItems.length : "(n/a)"
-    }
-  );
+  console.log("[DEBUG/iOS] counts", {
+    rawItems: Array.isArray(items) ? items.length : "(n/a)",
+    visibleItems: Array.isArray(visibleItems) ? visibleItems.length : "(n/a)",
+  });
 
   const handleRunLowStockSmoke = () => {
     runLowStockSmoke(items, toast, { threshold: 5 });
   };
 
   const openEditModal = (item, evt) => {
+    console.log("[Modal] openEditModal fired with:", item);
     if (evt && evt.currentTarget) {
       openTriggerRef.current = evt.currentTarget;
     }
@@ -216,11 +212,7 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
 
   const saveEditModal = useCallback(async () => {
     if (!editingItem?._id) return;
-    await handleUpdateItem(
-      editingItem._id,
-      "quantity",
-      Number(editingItem.quantity)
-    );
+    await handleUpdateItem(editingItem._id, "quantity", Number(editingItem.quantity));
     await handleUpdateItem(editingItem._id, "price", editingItem.price);
     await handleUpdateItem(editingItem._id, "location", editingItem.location);
     closeEditModal();
@@ -251,6 +243,8 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
         {isSyncing ? <InlineSpinner label="Syncing…" /> : null}
       </div>
 
+      <OfflineBanner /> {/* ✅ now rendered */}
+
       {/* 🛠 TEMP DEBUG PANEL */}
       <div style={{ padding: 8, fontSize: 12, color: "#90a4ae" }}>
         <div><b>Debug</b></div>
@@ -273,10 +267,7 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
         lowStockThreshold={lowStockThreshold} setLowStockThreshold={setLowStockThreshold}
       />
 
-      <TotalsSummary
-        totalsByGroup={totalsByGroup}
-        totalOverall={totalOverall}
-      />
+      <TotalsSummary totalsByGroup={totalsByGroup} totalOverall={totalOverall} />
 
       <ItemsTable
         items={visibleItems}

@@ -1,79 +1,116 @@
-import React, { useState } from 'react';
+import React, { useState } from "react";
 
 const FloatingAddButton = ({ onClick }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [form, setForm] = useState({
+    itemName: "",
+    quantity: "",
+    price: "",
+    location: "C-Store",
+  });
+
+  const onChange = (field) => (e) =>
+    setForm((f) => ({ ...f, [field]: e.target.value }));
+
+  const handleAdd = () => {
+    console.log('[FAB] handleAdd payload about to send:', form);
+    if (typeof onClick === "function") {
+      onClick({
+        itemName: String(form.itemName || "").trim(),
+        quantity: form.quantity,
+        price: form.price,
+        location: form.location || "C-Store",
+      });
+    }
+    setIsModalOpen(false);
+    setForm({ itemName: "", quantity: "", price: "", location: "C-Store" });
+
+  };
 
   return (
     <>
       {/* Floating “+” button */}
       <button
-        onClick={() => setIsModalOpen(true)}
-        className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full bg-blue-600 text-white shadow-lg flex items-center justify-center text-3xl hover:bg-blue-700 transition"
+         onClick={() => setIsModalOpen(true)}
+         className="fixed z-50 w-14 h-14 rounded-full bg-blue-600 text-white shadow-lg flex items-center justify-center text-3xl hover:bg-blue-700 transition"
+         style={{
+             // keep Tailwind’s spacing, then add safe-area insets
+             bottom: "calc(env(safe-area-inset-bottom, 0px) + 1.5rem)", // 1.5rem ≈ Tailwind bottom-6
+             right:  "calc(env(safe-area-inset-right,  0px) + 1.5rem)",
+           }}
+         aria-label="Add item"
       >
         +
+
       </button>
 
-      {/* Modal (self-contained here) */}
+      {/* Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 flex items-center justify-center bg-black/50 z-[60]">
           <div className="bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 rounded-xl shadow-xl p-6 w-full max-w-md">
             <h2 className="text-xl font-semibold mb-4">Add New Item</h2>
 
-            {/* Item Name */}
             <div className="mb-4">
-              <label className="block text-sm mb-1 text-gray-700 dark:text-gray-300">Item Name</label>
+              <label className="block text-sm mb-1">Item Name</label>
               <input
                 type="text"
-                className="w-full border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full border rounded-lg px-3 py-2 bg-white dark:bg-gray-800"
                 placeholder="Enter item name"
+                value={form.itemName}
+                onChange={onChange("itemName")}
+                required
               />
             </div>
 
-            {/* Quantity */}
             <div className="mb-4">
-              <label className="block text-sm mb-1 text-gray-700 dark:text-gray-300">Quantity</label>
+              <label className="block text-sm mb-1">Quantity</label>
               <input
                 type="number"
-                className="w-full border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full border rounded-lg px-3 py-2 bg-white dark:bg-gray-800"
                 placeholder="Enter quantity"
+                value={form.quantity}
+                onChange={onChange("quantity")}
+                min="0"
+                step="1"
+                required
               />
             </div>
 
-            {/* Price */}
             <div className="mb-4">
-              <label className="block text-sm mb-1 text-gray-700 dark:text-gray-300">Price</label>
+              <label className="block text-sm mb-1">Price</label>
               <input
                 type="number"
                 step="0.01"
-                className="w-full border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full border rounded-lg px-3 py-2 bg-white dark:bg-gray-800"
                 placeholder="Enter price"
+                value={form.price}
+                onChange={onChange("price")}
+                min="0"
+                required
               />
             </div>
 
-            {/* Location */}
             <div className="mb-6">
-              <label className="block text-sm mb-1 text-gray-700 dark:text-gray-300">Location</label>
-              <input
-                type="text"
-                className="w-full border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="Enter location"
-              />
+              <label className="block text-sm mb-1">Location</label>
+              <select
+                className="w-full border rounded-lg px-3 py-2 bg-white dark:bg-gray-800"
+                value={form.location}
+                onChange={onChange("location")}
+              >
+                <option value="C-Store">C-Store</option>
+                <option value="Restaurant">Restaurant</option>
+              </select>
             </div>
 
-            {/* Buttons */}
             <div className="flex justify-end gap-3">
               <button
                 onClick={() => setIsModalOpen(false)}
-                className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600"
+                className="px-4 py-2 bg-gray-200 dark:bg-gray-700 rounded-lg"
               >
                 Cancel
               </button>
               <button
-                onClick={() => {
-                  // Call your existing App handler exactly as before (no payload changes)
-                  if (typeof onClick === 'function') onClick();
-                  setIsModalOpen(false);
-                }}
+                onClick={handleAdd}
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
               >
                 Add

@@ -1,25 +1,39 @@
 // src/hooks/useAddItem.js
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { addItem } from "../utils/db.js";
 
-/**
- * Provides newItem state + a handler to add it to DB and reset.
- * Call addNewItem() and then append returned item to your list.
- */
-export default function useAddItem() {
-  const [newItem, setNewItem] = useState({
-    itemName: "",
-    quantity: 0,
-    price: "",
-    location: "C-Store",
-  });
+const INITIAL = { itemName: "", quantity: "", price: "", location: "C-Store" };
 
-  const addNewItem = async () => {
-    if (!newItem.itemName.trim()) return null;
-    const added = await addItem(newItem);
-    setNewItem({ itemName: "", quantity: 0, price: "", location: "C-Store" });
-    return added;
-  };
+export default function useAddItem() {
+  const [newItem, setNewItem] = useState(INITIAL);
+
+  const addNewItem = useCallback(async (payload) => {
+    // prefer explicit payload (e.g., from FloatingAddButton), else use current form state
+    const src = payload ?? newItem;
+
+    // 🔎 debug: confirm what addNewItem is actually using
+    console.log("[addNewItem] payload=", payload, " state=", newItem);
+
+    const itemName = String(src?.itemName || "").trim();
+    const quantity = Number.isFinite(Number(src?.quantity)) ? Number(src.quantity) : 0;
+    const price    = Number.isFinite(Number(src?.price)) ? Number(src.price) : 0;
+    const location = String(src?.location || "C-Store").trim();
+
+    if (!itemName) return null;
+
+    const saved = await addItem({
+      itemName,
+      quantity,
+      price,
+      location,
+      isDeleted: false,
+      syncStatus: "pending",
+      // lastUpdated is set in addItem()
+    });
+
+    setNewItem(INITIAL);
+    return saved;
+  }, [newItem]);
 
   return { newItem, setNewItem, addNewItem };
 }

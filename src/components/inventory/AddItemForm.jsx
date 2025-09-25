@@ -1,73 +1,63 @@
 // src/components/inventory/AddItemForm.jsx
 import React from "react";
-import BtnSpinner from "./BtnSpinner.jsx";
 
 export default function AddItemForm({ newItem, setNewItem, onAdd, disabled }) {
+  const onChange = (field) => (e) => {
+    const val = e.target.value;
+    setNewItem((prev) => ({ ...prev, [field]: val }));
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (disabled) return;
+    onAdd(); // <- uses current newItem from state; no hard-coded payload
+  };
+
   return (
-    <div className="flex gap-2 mb-4 flex-wrap">
+    <form onSubmit={handleSubmit} className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-5">
       <input
-        className="border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)] min-w-[160px] h-10 text-sm
-                   outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
-                   focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
-        placeholder="Item Name"
-        aria-label="New item name"
-        value={newItem.itemName}
-        onChange={(e) => setNewItem({ ...newItem, itemName: e.target.value })}
-        disabled={disabled}
+        className="rounded border px-2 py-1"
+        placeholder="Item name"
+        value={newItem?.itemName || ""}
+        onChange={onChange("itemName")}
+        required
       />
       <input
+        className="rounded border px-2 py-1"
         type="number"
-        className="border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)] w-24 h-10 text-sm
-                   outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
-                   focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
         placeholder="Qty"
-        aria-label="New item quantity"
-        value={newItem.quantity}
-        onChange={(e) => setNewItem({ ...newItem, quantity: Number(e.target.value) })}
-        disabled={disabled}
-        min={0}
-        step={1}
-        inputMode="numeric"
+        value={newItem?.quantity ?? ""}
+        onChange={onChange("quantity")}
+        min="0"
+        step="1"
+        required
       />
       <input
+        className="rounded border px-2 py-1"
         type="number"
-        step="0.01"
-        className="border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)] w-28 h-10 text-sm
-                   outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
-                   focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
         placeholder="Price"
-        aria-label="New item price"
-        value={newItem.price}
-        onChange={(e) => setNewItem({ ...newItem, price: e.target.value })}
-        disabled={disabled}
-        min={0}
-        inputMode="decimal"
+        value={newItem?.price ?? ""}
+        onChange={onChange("price")}
+        min="0"
+        step="0.01"
+        required
       />
       <select
-        className="border border-[var(--color-border)] p-2 rounded bg-[var(--color-surface)] text-[var(--color-text)] h-10 text-sm
-                   outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
-                   focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
-        aria-label="New item location"
-        value={newItem.location}
-        onChange={(e) => setNewItem({ ...newItem, location: e.target.value })}
-        disabled={disabled}
+        className="rounded border px-2 py-1"
+        value={newItem?.location || "C-Store"}
+        onChange={onChange("location")}
+        required
       >
         <option value="C-Store">C-Store</option>
         <option value="Restaurant">Restaurant</option>
       </select>
       <button
-        onClick={onAdd}
-        aria-label="Add item"
-        className="bg-[var(--color-success)] text-white px-4 py-2 rounded h-10 text-sm
-                   outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
-                   focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]
-                   hover:opacity-90 active:opacity-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
+        type="submit"
         disabled={disabled}
-        title="Add Item"
+        className="rounded bg-[var(--color-primary)] px-3 py-1 text-white disabled:opacity-60"
       >
-        {disabled ? <BtnSpinner /> : null}
         Add
       </button>
-    </div>
+    </form>
   );
 }

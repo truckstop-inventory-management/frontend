@@ -11,15 +11,11 @@ export default function OfflineBanner({ token }) {
       setVisible(true);
       return;
     }
-    // Back online
     setVisible(true);
-
-    // Trigger a sync on reconnect (if authenticated)
     if (token) {
-      console.log('🌐 Back online — starting sync…');
+      console.log("🌐 Back online — starting sync…");
       runFullSync(token);
     }
-
     const t = setTimeout(() => setVisible(false), 2500);
     return () => clearTimeout(t);
   }, [isOnline, changedAt, token]);
@@ -27,27 +23,35 @@ export default function OfflineBanner({ token }) {
   if (!visible) return null;
 
   const baseStyle = {
-    position: 'fixed',
+    position: "fixed",
     top: 0,
     left: 0,
     right: 0,
-    padding: '10px 14px',
+    padding: "10px 14px",
     fontSize: 14,
-    textAlign: 'center',
-    color: '#fff',
+    textAlign: "center",
+    color: "#fff",
     zIndex: 9999,
-    boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+    boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
   };
 
-  const style = isOnline
-    ? { ...baseStyle, background: '#16a34a' } // green
-    : { ...baseStyle, background: '#ef4444' }; // red
+  const bannerStyle = isOnline
+    ? { ...baseStyle, background: "#16a34a" } // green
+    : { ...baseStyle, background: "#ef4444" }; // red
 
   return (
-    <div style={style} role="status" aria-live="polite">
+    <div
+      role="status"
+      aria-live="polite"
+      style={{
+        ...bannerStyle,
+        // keep it clear of notches/camera holes
+        paddingTop: "calc(env(safe-area-inset-top, 0px) + 10px)",
+      }}
+    >
       {isOnline
-        ? 'Back online — syncing…'
-        : 'Offline mode — changes will sync when you reconnect'}
+        ? "Back online — syncing…"
+        : "Offline mode — changes will sync when you reconnect"}
     </div>
   );
 }

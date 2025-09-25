@@ -10,6 +10,9 @@ if (!API_URL) {
   console.warn("[SYNC] VITE_BACKEND_URL not set; defaulting to same-origin base ('').");
 }
 
+// ✅ Single source of truth for inventory API
+const INVENTORY_BASE = `${API_URL}/api/inventory`;
+
 // --- Helper: ensure response is JSON ---
 async function jsonIfPossible(res) {
   const ct = res.headers.get("content-type") || "";
@@ -25,10 +28,7 @@ async function jsonIfPossible(res) {
   if (ct.includes("application/json")) return res.json();
   const text = await res.text();
   throw new Error(
-    `[SYNC] Expected JSON but got "${ct}". URL=${res.url}; BodyStart="${text.slice(
-      0,
-      120
-    )}"`
+    `[SYNC] Expected JSON but got "${ct}". URL=${res.url}; BodyStart="${text.slice(0, 120)}"`
   );
 }
 
@@ -37,7 +37,7 @@ export const syncBus = new EventTarget();
 
 async function deleteOnServer(id) {
   try {
-    const res = await fetchWithAuth(`${API_URL}/inventory/${id}`, {
+    const res = await fetchWithAuth(`${INVENTORY_BASE}/${id}`, {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
     });
@@ -53,17 +53,18 @@ async function deleteOnServer(id) {
 
 export async function syncWithServer() {
   console.log("[SYNC] Starting sync...");
-  // --- NEW: notify UI that sync has started
+  // --- notify UI that sync has started
   try {
     syncBus.dispatchEvent(new CustomEvent("syncstart"));
   } catch (_) {
     // no-op if CustomEvent/EventTarget not available
+    console.log(_);
   }
 
   try {
     // 1) Pull server inventory
     console.log("[SYNC] Fetching server inventory...");
-    const serverResponse = await fetchWithAuth(`${API_URL}/api/inventory`);
+    const serverResponse = await fetchWithAuth(`${INVENTORY_BASE}`);
     const serverItems = await jsonIfPossible(serverResponse);
 
     // 2) Snapshot local items
@@ -87,7 +88,7 @@ export async function syncWithServer() {
             `[SYNC] Removing duplicate on server "${dup.itemName}" at ${dup.location}`
           );
           try {
-            await fetchWithAuth(`${API_URL}/inventory/${dup._id}`, {
+            await fetchWithAuth(`${INVENTORY_BASE}/${dup._id}`, {
               method: "DELETE",
             });
           } catch (err) {
@@ -146,7 +147,7 @@ export async function syncWithServer() {
     for (const it of localItems) {
       if (it.syncStatus === "pending" && !it.isDeleted) {
         try {
-          const res = await fetchWithAuth(`${API_URL}/inventory`, {
+          const res = await fetchWithAuth(`${INVENTORY_BASE}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(it),
@@ -173,7 +174,7 @@ export async function syncWithServer() {
 
             if (serverMatch) {
               const updateRes = await fetchWithAuth(
-                `${API_URL}/inventory/${serverMatch._id}`,
+                `${INVENTORY_BASE}/${serverMatch._id}`,
                 {
                   method: "PUT",
                   headers: { "Content-Type": "application/json" },
@@ -227,13 +228,19 @@ export async function syncWithServer() {
   } catch (err) {
     console.error("[SYNC] Sync failed:", err);
   } finally {
-    // --- NEW: notify UI that sync has ended (slight delay to avoid flicker)
+    // --- notify UI that sync has ended (slight delay to avoid flicker)
     try {
       setTimeout(() => {
         syncBus.dispatchEvent(new CustomEvent("syncend"));
       }, 120);
     } catch (_) {
+      console.log(_)
       // no-op
     }
   }
+}
+
+// ✅ Non-breaking alias for the full sync routine (used by OfflineBanner, auto-sync, etc.)
+export async function runFullSync(...args) {
+  return syncWithServer(...args);
 }

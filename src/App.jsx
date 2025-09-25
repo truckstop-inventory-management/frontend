@@ -7,8 +7,8 @@ import { LOCATION } from "./utils/location";
 import InventoryViewToggle from "./components/InventoryViewToggle";
 import InventoryList from "./components/InventoryList";
 import LoginForm from "./components/LoginForm";
-import FloatingButton from './components/FloatingAddButton.jsx';
-import { ToastProvider } from './components/ui/ToastProvider.jsx';
+import FloatingButton from "./components/FloatingAddButton.jsx";
+import { ToastProvider } from "./components/ui/ToastProvider.jsx";
 import "./styles/theme.css";
 
 export default function App() {
@@ -26,17 +26,28 @@ export default function App() {
     setMetrics({ counts, totals });
   }, []);
 
-  const handleAddItem = async () => {
+  // ✅ UPDATED: accept payload from FloatingAddButton and persist *that* item
+  const handleAddItem = async (payload) => {
     if (isAdding) return; // 🔒 prevent duplicates on rapid clicks
     setIsAdding(true);
 
     try {
+      // Validate & normalize incoming payload
+      const itemName = String(payload?.itemName || "").trim();
+      const quantity = Number.isFinite(Number(payload?.quantity)) ? Number(payload.quantity) : 0;
+      const price = Number.isFinite(Number(payload?.price)) ? Number(payload.price) : 0;
+      const location = String(payload?.location || "C-Store").trim();
+
+      if (!itemName) {
+        console.warn("[App] handleAddItem called without a valid itemName; ignoring.");
+        return;
+      }
+
       const newItem = {
-        _id: `local_${Date.now()}`, // consistent temp id
-        itemName: "Test Item",
-        quantity: 1,
-        price: 0,
-        location: "C-Store",
+        itemName,
+        quantity,
+        price,
+        location,
         syncStatus: "pending",
         isDeleted: false,
         lastUpdated: new Date().toISOString(),
@@ -45,12 +56,11 @@ export default function App() {
       await addItem(newItem);
       console.log("[App] Added new item:", newItem);
 
-      // Optionally trigger sync immediately
+      // Optionally trigger sync immediately (preserves your previous behavior)
       await syncWithServer();
 
-      // Refresh local state
-    //   const allItems = await getAllItems();
-    //   setItems(allItems);
+      // If you want to refresh local state here, call getAllItems() and setItems(...)
+      // but InventoryList is already reading from IDB on its own lifecycle.
     } catch (err) {
       console.error("[App] Error adding item:", err);
     } finally {
@@ -88,7 +98,6 @@ export default function App() {
     const selectedTotal = metrics.totals[selectedView] || 0;
 
     return (
-
       <ToastProvider>
         <div style={{ paddingTop: 48 }}>
           {/* Header */}
@@ -138,7 +147,8 @@ export default function App() {
           />
 
           {/* Floating + Button */}
-          <FloatingButton onClick={handleAddItem}/>
+          {/* The FAB now passes a payload; this handler consumes it */}
+          <FloatingButton onClick={handleAddItem} />
         </div>
       </ToastProvider>
     );
