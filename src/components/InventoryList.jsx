@@ -99,7 +99,20 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
     setItems((prev) => {
       const updated = prev.map((i) => {
         if (i._id !== id) return i;
-        nextItem = { ...i, [field]: value };
+
+        // ✅ ensure numeric fields are numbers (server expects numbers)
+        const coerced =
+          field === "quantity" ? Number(value)
+            : field === "price"    ? Number(value)
+              : value;
+
+        nextItem = {
+          ...i,
+          [field]: coerced,
+          // ✅ mark dirty so sync will push; also bump lastUpdated
+          syncStatus: "pending",
+          lastUpdated: new Date().toISOString(),
+        };
         return nextItem;
       });
       return updated;
@@ -169,10 +182,10 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
 
   const { totalsByGroup, totalOverall } = useTotals(visibleItems);
 
-  console.log("[DEBUG/iOS] counts", {
+  /*console.log("[DEBUG/iOS] counts", {
     rawItems: Array.isArray(items) ? items.length : "(n/a)",
     visibleItems: Array.isArray(visibleItems) ? visibleItems.length : "(n/a)",
-  });
+  });*/
 
   const handleRunLowStockSmoke = () => {
     runLowStockSmoke(items, toast, { threshold: 5 });
@@ -187,7 +200,7 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
       _id: item._id,
       itemName: item.itemName || "",
       quantity: Number(item.quantity) || 0,
-      price: item.price ?? "",
+      price: item.price !== undefined && item.price !== null ? Number(item.price) : "",
       location: item.location || "C-Store",
     });
     setIsEditOpen(true);
@@ -218,10 +231,11 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
     closeEditModal();
   }, [editingItem, handleUpdateItem]);
 
+  // ✅ Prevent re-focus loop by not passing firstFieldRef here
   useEditModalKeyboard({
     isOpen: isEditOpen,
     modalRef,
-    firstFieldRef,
+    // firstFieldRef, // intentionally omitted to avoid focus jumps
     onClose: closeEditModal,
     onSave: saveEditModal,
   });

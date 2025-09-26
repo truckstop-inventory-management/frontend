@@ -57,7 +57,6 @@ export async function syncWithServer() {
   try {
     syncBus.dispatchEvent(new CustomEvent("syncstart"));
   } catch (_) {
-    // no-op if CustomEvent/EventTarget not available
     console.log(_);
   }
 
@@ -147,6 +146,37 @@ export async function syncWithServer() {
     for (const it of localItems) {
       if (it.syncStatus === "pending" && !it.isDeleted) {
         try {
+          // If this item already has a non-local server ID, do PUT directly
+          if (it._id && typeof it._id === "string" && !it._id.startsWith("local_")) {
+            const updateRes = await fetchWithAuth(`${INVENTORY_BASE}/${it._id}`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(it),
+            });
+            if (updateRes.ok) {
+              const serverEcho = await jsonIfPossible(updateRes).catch(() => ({}));
+              // ✅ Prefer client-edited fields; keep server-owned fields like _id
+              const applied = await updateItem({
+                ...serverEcho,
+                itemName: it.itemName,
+                quantity: Number(it.quantity),
+                price: Number(it.price),
+                location: it.location,
+                isDeleted: false,
+                syncStatus: "synced",
+                lastUpdated: it.lastUpdated || new Date().toISOString(),
+              });
+              console.log(
+                `[SYNC] Updated existing item -> ${applied.itemName} (${applied._id})`
+              );
+            } else {
+              const txt = await updateRes.text().catch(() => "");
+              console.error("[SYNC] Failed to PUT update", txt);
+            }
+            continue; // move to next pending item
+          }
+
+          // Original POST-first path (kept for brand-new local_* items)
           const res = await fetchWithAuth(`${INVENTORY_BASE}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -154,9 +184,15 @@ export async function syncWithServer() {
           });
 
           if (res.ok) {
-            const saved = await res.json();
-            console.log(`[SYNC] Pushed new item -> ${saved.itemName} (${saved._id})`);
-            await updateItem({ ...saved, syncStatus: "synced", isDeleted: false });
+            const saved = await jsonIfPossible(res).catch(() => ({}));
+            const applied = await updateItem({
+              ...saved,
+              syncStatus: "synced",
+              isDeleted: false,
+            });
+            console.log(
+              `[SYNC] Pushed new item -> ${applied.itemName} (${applied._id})`
+            );
 
             if (it._id && String(it._id).startsWith("local_")) {
               await deleteItem(it._id);
@@ -183,15 +219,21 @@ export async function syncWithServer() {
               );
 
               if (updateRes.ok) {
-                const updated = await updateRes.json();
-                console.log(
-                  `[SYNC] Updated existing item -> ${updated.itemName} (${updated._id})`
-                );
-                await updateItem({
-                  ...updated,
-                  syncStatus: "synced",
+                const serverEcho = await jsonIfPossible(updateRes).catch(() => ({}));
+                // ✅ Prefer client-edited fields; keep server-owned fields like _id
+                const applied = await updateItem({
+                  ...serverEcho,
+                  itemName: it.itemName,
+                  quantity: Number(it.quantity),
+                  price: Number(it.price),
+                  location: it.location,
                   isDeleted: false,
+                  syncStatus: "synced",
+                  lastUpdated: it.lastUpdated || new Date().toISOString(),
                 });
+                console.log(
+                  `[SYNC] Updated existing item -> ${applied.itemName} (${applied._id})`
+                );
 
                 if (it._id && String(it._id).startsWith("local_")) {
                   await deleteItem(it._id);
@@ -234,8 +276,7 @@ export async function syncWithServer() {
         syncBus.dispatchEvent(new CustomEvent("syncend"));
       }, 120);
     } catch (_) {
-      console.log(_)
-      // no-op
+      console.log(_);
     }
   }
 }

@@ -1,6 +1,5 @@
 // src/components/inventory/EditItemModal.jsx
-import React from "react";
-import BtnSpinner from "./BtnSpinner.jsx";
+import React, { useEffect } from "react";
 
 export default function EditItemModal({
                                         isOpen,
@@ -9,125 +8,138 @@ export default function EditItemModal({
                                         onEditField,
                                         onSave,
                                         onClose,
-                                        modalRef,       // ref from parent (focus trap logic lives in parent)
-                                        firstFieldRef,  // ref from parent (initial focus)
+                                        modalRef,
+                                        firstFieldRef,
                                       }) {
-  if (!isOpen || !editingItem) return null;
+  if (!isOpen) return null;
+
+  // Focus only once when the modal opens; do not re-focus on every render
+  useEffect(() => {
+    if (
+      isOpen &&
+      firstFieldRef &&
+      firstFieldRef.current &&
+      typeof firstFieldRef.current.focus === "function"
+    ) {
+      firstFieldRef.current.focus();
+    }
+  }, [isOpen, firstFieldRef]);
+
+  const onChange =
+    (field) =>
+      (e) => {
+        const v = e && e.target ? e.target.value : "";
+        onEditField(field, field === "quantity" ? Number(v) : v);
+      };
+
+  const itemNameVal =
+    editingItem ? (editingItem.itemName ? editingItem.itemName : "") : "";
+  const qtyVal =
+    editingItem && typeof editingItem.quantity !== "undefined"
+      ? Number(editingItem.quantity || 0)
+      : 0;
+  const priceVal =
+    editingItem && editingItem.price !== undefined && editingItem.price !== null
+      ? editingItem.price
+      : "";
+  const locationVal =
+    editingItem && editingItem.location ? editingItem.location : "C-Store";
 
   return (
     <div
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50"
       role="dialog"
       aria-modal="true"
       aria-labelledby="edit-item-title"
-      className="fixed inset-0 z-50 flex items-center justify-center"
     >
-      {/* backdrop */}
-      <div
-        className="absolute inset-0 bg-black/50"
-        onClick={onClose}
-      />
-
-      {/* modal card */}
       <div
         ref={modalRef}
-        className="relative z-10 w-full max-w-md rounded-2xl bg-[var(--color-surface)] shadow-xl border border-[var(--color-border)] p-4
-                   transition transform duration-150 ease-out motion-reduce:transition-none motion-reduce:transform-none"
+        className="w-full max-w-md rounded-xl bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 shadow-xl p-6"
       >
-        <h3 id="edit-item-title" className="text-lg font-semibold mb-3 text-[var(--color-text)]">
+        <h2 id="edit-item-title" className="text-xl font-semibold mb-4">
           Edit Item
-        </h3>
+        </h2>
 
-        <div className="space-y-3">
-          <div>
-            <label htmlFor="edit-name" className="block text-sm text-[var(--color-text)]/80 mb-1">
-              Name
-            </label>
-            <input
-              id="edit-name"
-              ref={firstFieldRef}
-              className="w-full border border-[var(--color-border)] rounded p-2 h-10 text-sm bg-[var(--color-surface)] text-[var(--color-text)]
-                         outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
-                         focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
-              value={editingItem.itemName}
-              onChange={(e) => onEditField("itemName", e.target.value)}
-              disabled={isSyncing}
-            />
-          </div>
-
-          <div className="flex gap-2">
-            <div className="flex-1">
-              <label htmlFor="edit-qty" className="block text-sm text-[var(--color-text)]/80 mb-1">
-                Quantity
-              </label>
-              <input
-                id="edit-qty"
-                type="number"
-                className="w-full border border-[var(--color-border)] rounded p-2 h-10 text-sm bg-[var(--color-surface)] text-[var(--color-text)]
-                           outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
-                           focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
-                value={editingItem.quantity}
-                onChange={(e) => onEditField("quantity", Number(e.target.value))}
-                disabled={isSyncing}
-              />
-            </div>
-            <div className="flex-1">
-              <label htmlFor="edit-price" className="block text-sm text-[var(--color-text)]/80 mb-1">
-                Price
-              </label>
-              <input
-                id="edit-price"
-                type="number"
-                step="0.01"
-                className="w-full border border-[var(--color-border)] rounded p-2 h-10 text-sm bg-[var(--color-surface)] text-[var(--color-text)]
-                           outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
-                           focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
-                value={editingItem.price}
-                onChange={(e) => onEditField("price", e.target.value)}
-                disabled={isSyncing}
-              />
-            </div>
-          </div>
-
-          <div>
-            <label htmlFor="edit-location" className="block text-sm text-[var(--color-text)]/80 mb-1">
-              Location
-            </label>
-            <select
-              id="edit-location"
-              className="w-full border border-[var(--color-border)] rounded p-2 h-10 text-sm bg-[var(--color-surface)] text-[var(--color-text)]
-                         outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
-                         focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
-              value={editingItem.location}
-              onChange={(e) => onEditField("location", e.target.value)}
-              disabled={isSyncing}
-            >
-              <option value="C-Store">C-Store</option>
-              <option value="Restaurant">Restaurant</option>
-            </select>
-          </div>
+        {/* Item Name */}
+        <div className="mb-4">
+          <label className="block text-sm mb-1" htmlFor="edit-item-name">
+            Item Name
+          </label>
+          <input
+            id="edit-item-name"
+            ref={firstFieldRef}
+            type="text"
+            className="w-full border rounded-lg px-3 py-2 bg-white dark:bg-gray-800"
+            value={itemNameVal}
+            onChange={onChange("itemName")}
+          />
         </div>
 
-        <div className="mt-4 flex justify-end gap-2">
+        {/* Quantity */}
+        <div className="mb-4">
+          <label className="block text-sm mb-1" htmlFor="edit-item-qty">
+            Quantity
+          </label>
+          <input
+            id="edit-item-qty"
+            type="number"
+            inputMode="numeric"
+            className="w-full border rounded-lg px-3 py-2 bg-white dark:bg-gray-800"
+            min="0"
+            step="1"
+            value={qtyVal}
+            onChange={onChange("quantity")}
+          />
+        </div>
+
+        {/* Price */}
+        <div className="mb-4">
+          <label className="block text-sm mb-1" htmlFor="edit-item-price">
+            Price
+          </label>
+          <input
+            id="edit-item-price"
+            type="number"
+            inputMode="decimal"
+            step="0.01"
+            min="0"
+            className="w-full border rounded-lg px-3 py-2 bg-white dark:bg-gray-800"
+            value={priceVal}
+            onChange={onChange("price")}
+          />
+        </div>
+
+        {/* Location */}
+        <div className="mb-6">
+          <label className="block text-sm mb-1" htmlFor="edit-item-location">
+            Location
+          </label>
+          <select
+            id="edit-item-location"
+            className="w-full border rounded-lg px-3 py-2 bg-white dark:bg-gray-800"
+            value={locationVal}
+            onChange={onChange("location")}
+          >
+            <option value="C-Store">C-Store</option>
+            <option value="Restaurant">Restaurant</option>
+          </select>
+        </div>
+
+        <div className="flex justify-end gap-3">
           <button
+            type="button"
             onClick={onClose}
-            className="px-4 py-2 rounded border border-[var(--color-border)] text-[var(--color-text)] h-10 text-sm min-w-[84px]
-                       hover:bg-[var(--color-surface-2)]
-                       outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
-                       focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
-            title="Cancel Changes"
+            className="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700"
+            disabled={isSyncing}
           >
             Cancel
           </button>
           <button
+            type="button"
             onClick={onSave}
-            className="px-4 py-2 rounded bg-[var(--color-primary)] text-white h-10 text-sm min-w-[84px] flex items-center
-                       hover:opacity-90 active:opacity-100 disabled:opacity-50 disabled:cursor-not-allowed
-                       outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
-                       focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
+            className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60"
             disabled={isSyncing}
-            title="Save Changes"
           >
-            {isSyncing ? <BtnSpinner /> : null}
             Save
           </button>
         </div>
