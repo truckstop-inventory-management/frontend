@@ -1,5 +1,5 @@
 {
-  "appId": "com.yourco.truckstop",
+  "appId": "com.nfllc.truckstop",
   "appName": "Truckstop Inventory",
   "webDir": "dist",
   "bundledWebRuntime": false,
