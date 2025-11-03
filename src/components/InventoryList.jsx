@@ -1,5 +1,4 @@
 // src/components/InventoryList.jsx
-
 import React, { useEffect, useState, useRef, useCallback } from "react";
 import { getAllItems, updateItem, markItemDeleted, unmarkItemDeleted } from "../utils/db.js";
 import useToast from "../hooks/useToast.js";
@@ -18,14 +17,17 @@ import EditItemModal from "./inventory/EditItemModal.jsx";
 import { createLongPressHandlers } from "../utils/createLongPressHandlers.js";
 import { runLowStockSmoke } from "../utils/runLowStockSmoke.js";
 import useInstallPrompt from "../hooks/useInstallPrompt.js";
-import OfflineBanner from "./OfflineBanner.jsx"; // ✅ mount the banner
+import OfflineBanner from "./OfflineBanner.jsx";
+
+// Phase 6
+import BarcodeScannerSheet from "../features/barcode/BarcodeScannerSheet.jsx";
+import { upsertBarcode } from "../utils/barcodeCache.js";
+import useBarcodePrefill from "../hooks/useBarcodePrefill.js";
 
 const InventoryList = ({ dbReady, onMetricsChange }) => {
   const [items, setItems] = useState([]);
-
   const { newItem, setNewItem, addNewItem } = useAddItem();
   const { canInstall, promptInstall } = useInstallPrompt();
-
   const {
     sortBy, setSortBy,
     sortDir, setSortDir,
@@ -39,38 +41,22 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
 
   const toast = useToast();
   const longPressTimers = useRef({});
-
+  const openTriggerRef = useRef(null);
   const modalRef = useRef(null);
   const firstFieldRef = useRef(null);
-  const openTriggerRef = useRef(null);
 
-  const isDev =
-    typeof window !== "undefined" &&
-    !!(window.location && window.location.search.includes("dev=1"));
-
+  const isDev = typeof window !== "undefined" && !!(window.location && window.location.search.includes("dev=1"));
   const isSyncing = useSyncSpinner();
 
-  // 🛠 TEMP iOS FIX — clear persisted UI prefs on first native run to avoid hidden filters
-  useEffect(() => {
-    try {
-      const key = "tsinv:uiPrefs";
-      if (localStorage.getItem(key)) {
-        localStorage.removeItem(key);
-        console.log("[DEBUG/iOS] Cleared", key, "to avoid hidden filters on first native run.");
-      } else {
-        console.log("[DEBUG/iOS] No uiPrefs found; nothing to clear.");
-      }
-    } catch (e) {
-      console.warn("[DEBUG/iOS] Could not access localStorage:", e);
-    }
-  }, []);
+  // Scanner wiring
+  const [scan, setScan] = useState({ open: false, code: null });
+  const { prefill, meta } = useBarcodePrefill(scan.code);
 
-  // Load current items from IDB once DB is ready
+  // Load items
   useEffect(() => {
     if (!dbReady) return;
     getAllItems().then((data) => {
       setItems(data);
-
       const counts = { "C-Store": 0, Restaurant: 0 };
       const totals = { "C-Store": 0, Restaurant: 0 };
       data.forEach((i) => {
@@ -83,43 +69,24 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
     });
   }, [dbReady, onMetricsChange]);
 
-  // When syncing finishes, refresh items
+  // Refresh post-sync
   const wasSyncingRef = useRef(false);
   useEffect(() => {
     if (wasSyncingRef.current && !isSyncing) {
-      setTimeout(() => {
-        getAllItems().then((data) => setItems(data));
-      }, 50);
+      setTimeout(() => { getAllItems().then(setItems); }, 50);
     }
     wasSyncingRef.current = isSyncing;
   }, [isSyncing]);
 
   const handleUpdateItem = useCallback(async (id, field, value) => {
     let nextItem = null;
-    setItems((prev) => {
-      const updated = prev.map((i) => {
-        if (i._id !== id) return i;
-
-        // ✅ ensure numeric fields are numbers (server expects numbers)
-        const coerced =
-          field === "quantity" ? Number(value)
-            : field === "price"    ? Number(value)
-              : value;
-
-        nextItem = {
-          ...i,
-          [field]: coerced,
-          // ✅ mark dirty so sync will push; also bump lastUpdated
-          syncStatus: "pending",
-          lastUpdated: new Date().toISOString(),
-        };
-        return nextItem;
-      });
-      return updated;
-    });
-    if (nextItem) {
-      await updateItem(nextItem);
-    }
+    setItems((prev) => prev.map((i) => {
+      if (i._id !== id) return i;
+      const coerced = field === "quantity" ? Number(value) : field === "price" ? Number(value) : value;
+      nextItem = { ...i, [field]: coerced, syncStatus: "pending", lastUpdated: new Date().toISOString() };
+      return nextItem;
+    }));
+    if (nextItem) await updateItem(nextItem);
   }, []);
 
   const handleAddItem = async (payload) => {
@@ -130,22 +97,14 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
   const handleDeleteItem = async (id) => {
     const prev = items.find((i) => i._id === id);
     if (!prev) return;
-
     await markItemDeleted(id);
-    const next = items.map((i) =>
-      i._id === id ? { ...i, isDeleted: true } : i
-    );
+    const next = items.map((i) => i._id === id ? { ...i, isDeleted: true } : i);
     setItems(next);
 
     const visible = next.filter((i) => !i.isDeleted);
     const counts = { "C-Store": 0, Restaurant: 0 };
     const totals = { "C-Store": 0, Restaurant: 0 };
-    visible.forEach((i) => {
-      if (i.location && counts[i.location] !== undefined) {
-        counts[i.location]++;
-        totals[i.location] += Number(i.price) * Number(i.quantity);
-      }
-    });
+    visible.forEach((i) => { if (i.location && counts[i.location] !== undefined) { counts[i.location]++; totals[i.location] += Number(i.price) * Number(i.quantity);} });
     onMetricsChange({ counts, totals });
 
     toast.show({
@@ -153,49 +112,24 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
       duration: 5000,
       onUndo: async () => {
         const restored = await unmarkItemDeleted(id);
-        const restoredState = items.map((i) =>
-          i._id === id ? { ...restored, isDeleted: false } : i
-        );
+        const restoredState = items.map((i) => i._id === id ? { ...restored, isDeleted: false } : i);
         setItems(restoredState);
-
         const visible2 = restoredState.filter((i) => !i.isDeleted);
         const counts2 = { "C-Store": 0, Restaurant: 0 };
         const totals2 = { "C-Store": 0, Restaurant: 0 };
-        visible2.forEach((i) => {
-          if (i.location && counts2[i.location] !== undefined) {
-            counts2[i.location]++;
-            totals2[i.location] += Number(i.price) * Number(i.quantity);
-          }
-        });
+        visible2.forEach((i) => { if (i.location && counts2[i.location] !== undefined) { counts2[i.location]++; totals2[i.location] += Number(i.price) * Number(i.quantity);} });
         onMetricsChange({ counts: counts2, totals: totals2 });
       },
     });
   };
 
-  const visibleItems = useVisibleItems(items, {
-    inStockOnly,
-    showLowStockOnly,
-    lowStockThreshold,
-    sortBy,
-    sortDir,
-  });
-
+  const visibleItems = useVisibleItems(items, { inStockOnly, showLowStockOnly, lowStockThreshold, sortBy, sortDir });
   const { totalsByGroup, totalOverall } = useTotals(visibleItems);
 
-  /*console.log("[DEBUG/iOS] counts", {
-    rawItems: Array.isArray(items) ? items.length : "(n/a)",
-    visibleItems: Array.isArray(visibleItems) ? visibleItems.length : "(n/a)",
-  });*/
-
-  const handleRunLowStockSmoke = () => {
-    runLowStockSmoke(items, toast, { threshold: 5 });
-  };
+  const handleRunLowStockSmoke = () => runLowStockSmoke(items, toast, { threshold: 5 });
 
   const openEditModal = (item, evt) => {
-    console.log("[Modal] openEditModal fired with:", item);
-    if (evt && evt.currentTarget) {
-      openTriggerRef.current = evt.currentTarget;
-    }
+    if (evt?.currentTarget) openTriggerRef.current = evt.currentTarget;
     setEditingItem({
       _id: item._id,
       itemName: item.itemName || "",
@@ -209,20 +143,10 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
   const closeEditModal = () => {
     setIsEditOpen(false);
     setEditingItem(null);
-    setTimeout(() => {
-      if (
-        openTriggerRef.current &&
-        typeof openTriggerRef.current.focus === "function"
-      ) {
-        openTriggerRef.current.focus();
-      }
-    }, 0);
+    setTimeout(() => { openTriggerRef.current?.focus?.(); }, 0);
   };
 
-  const onEditField = (field, value) => {
-    setEditingItem((prev) => ({ ...prev, [field]: value }));
-  };
-
+  const onEditField = (field, value) => setEditingItem((prev) => ({ ...prev, [field]: value }));
   const saveEditModal = useCallback(async () => {
     if (!editingItem?._id) return;
     await handleUpdateItem(editingItem._id, "quantity", Number(editingItem.quantity));
@@ -231,35 +155,44 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
     closeEditModal();
   }, [editingItem, handleUpdateItem]);
 
-  // ✅ Prevent re-focus loop by not passing firstFieldRef here
-  useEditModalKeyboard({
-    isOpen: isEditOpen,
-    modalRef,
-    // firstFieldRef, // intentionally omitted to avoid focus jumps
-    onClose: closeEditModal,
-    onSave: saveEditModal,
-  });
+  useEditModalKeyboard({ isOpen: isEditOpen, modalRef, onClose: closeEditModal, onSave: saveEditModal });
+
+  // Jump/highlight helper
+  const scrollToItemByBarcode = (barcode) => {
+    if (!barcode) return;
+    const match = items.find((i) => i.barcode === barcode && !i.isDeleted);
+    if (!match) return;
+    const el = document.querySelector(`[data-barcode="${CSS.escape(barcode)}"]`) ||
+      document.querySelector(`[data-itemid="${CSS.escape(match._id)}"]`);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.classList.add("ring-2","ring-yellow-400");
+      setTimeout(() => el.classList.remove("ring-2","ring-yellow-400"), 1600);
+    }
+  };
 
   return (
     <section aria-labelledby="inv-heading" className="p-4">
       <div className="mb-4 flex items-center justify-between gap-2">
-        <h2 id="inv-heading" className="text-xl font-bold text-[var(--color-text)]">
-          Inventory List
-        </h2>
-        {canInstall && (
-          <button
-            onClick={promptInstall}
-            className="px-3 py-1 rounded bg-[var(--color-primary)] text-white"
-          >
-            Install App
-          </button>
-        )}
-        {isSyncing ? <InlineSpinner label="Syncing…" /> : null}
+        <h2 id="inv-heading" className="text-xl font-bold text-[var(--color-text)]">Inventory List</h2>
+        <div className="flex items-center gap-2">
+          {isDev && (
+            <button
+              onClick={() => setScan({ open: true, code: null })}
+              className="px-3 py-1 rounded border border-[var(--color-border)] text-[var(--color-text)]"
+              aria-label="Open barcode scanner (dev)"
+              title="Open barcode scanner (dev)"
+            >Scan</button>
+          )}
+          {canInstall && (
+            <button onClick={promptInstall} className="px-3 py-1 rounded bg-[var(--color-primary)] text-white">Install App</button>
+          )}
+          {isSyncing ? <InlineSpinner label="Syncing…" /> : null}
+        </div>
       </div>
 
-      <OfflineBanner /> {/* ✅ now rendered */}
+      <OfflineBanner />
 
-      {/* 🛠 TEMP DEBUG PANEL */}
       <div style={{ padding: 8, fontSize: 12, color: "#90a4ae" }}>
         <div><b>Debug</b></div>
         <div>Raw items: {Array.isArray(items) ? items.length : 0}</div>
@@ -271,6 +204,8 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
         setNewItem={setNewItem}
         onAdd={handleAddItem}
         disabled={isSyncing}
+        prefill={prefill}
+        prefillNote={meta.seenText}
       />
 
       <SortFilterBar
@@ -288,23 +223,13 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
         isSyncing={isSyncing}
         onUpdateItem={handleUpdateItem}
         onOpenEditModal={openEditModal}
-        createLongPressHandlers={(id, onConfirm) =>
-          createLongPressHandlers(onConfirm, {
-            id,
-            threshold: 600,
-            timersRef: longPressTimers,
-          })
-        }
+        createLongPressHandlers={(id, onConfirm) => createLongPressHandlers(onConfirm, { id, threshold: 600, timersRef: longPressTimers })}
         onDeleteItem={handleDeleteItem}
       />
 
       {isDev && (
         <div className="mt-3 p-2 border border-dashed border-[var(--color-border)] rounded text-sm text-[var(--color-text)]">
-          <button
-            onClick={handleRunLowStockSmoke}
-            className="px-3 py-1 rounded bg-[var(--color-primary)] text-white"
-            disabled={isSyncing}
-          >
+          <button onClick={handleRunLowStockSmoke} className="px-3 py-1 rounded bg-[var(--color-primary)] text-white" disabled={isSyncing}>
             Run Low-Stock Smoke Test
           </button>
           <span className="ml-2 opacity-80">(opens console; threshold=5)</span>
@@ -321,6 +246,30 @@ const InventoryList = ({ dbReady, onMetricsChange }) => {
         modalRef={modalRef}
         firstFieldRef={firstFieldRef}
       />
+
+      {scan.open && (
+        <BarcodeScannerSheet
+          onClose={() => setScan({ open: false, code: null })}
+          onDecoded={async ({ text }) => {
+            // Duplicate barcode UX (soft warning + jump)
+            const already = items.find((i) => i.barcode === text && !i.isDeleted);
+            if (already) {
+              toast.show({
+                message: "This barcode already exists in your list.",
+                actionLabel: "View",
+                onAction: () => scrollToItemByBarcode(text),
+                duration: 6000,
+              });
+              // allow override to add anyway (set code so prefill appears)
+              setScan({ open: false, code: text });
+              return;
+            }
+            try { await upsertBarcode({ barcode: text }); } finally {
+              setScan({ open: false, code: text });
+            }
+          }}
+        />
+      )}
     </section>
   );
 };
