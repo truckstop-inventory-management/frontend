@@ -11,6 +11,8 @@ import FloatingButton from "./components/FloatingAddButton.jsx";
 import { ToastProvider } from "./components/ui/ToastProvider.jsx";
 import "./styles/theme.css";
 
+import {setBarcodeCacheDbName, ensureBarcodeCacheInitialized} from './utils/barcodeCache.js';
+
 export default function App() {
   const [dbReady, setDbReady] = useState(false);
   const [isAdding, setIsAdding] = useState(false);
@@ -80,7 +82,8 @@ export default function App() {
   // On mount: init DB + restore token
   useEffect(() => {
     initDB().then(() => setDbReady(true));
-
+    setBarcodeCacheDbName("truckstop-inventory-db");
+    ensureBarcodeCacheInitialized();
     const existing = localStorage.getItem("token");
     if (existing && existing !== "null") {
       setToken(existing);
