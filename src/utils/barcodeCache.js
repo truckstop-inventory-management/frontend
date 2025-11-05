@@ -7,42 +7,119 @@
 let DB_NAME = 'truckstop-inventory-db'; // use your existing DB name
 const STORE = 'barcodeCache';
 
+// ---- logging helpers --------------------------------------------------------
+const log = (...args) => console.log('[barcodeCache]', ...args);
+const warn = (...args) => console.warn('[barcodeCache]', ...args);
+const err = (...args) => console.error('[barcodeCache]', ...args);
+
 /** Optional: set the DB name before initialization (if your app sets it elsewhere) */
 export function setBarcodeCacheDbName(name) {
-  if (typeof name === 'string' && name.trim()) DB_NAME = name.trim();
+  if (typeof name === 'string' && name.trim()) {
+    DB_NAME = name.trim();
+    log('DB_NAME set to', DB_NAME);
+  }
+}
+
+/** Small helper: describe objectStoreNames as an array for logs */
+function listStoreNames(db) {
+  return Array.from(db.objectStoreNames || []);
 }
 
 /** Open DB (optionally with version) with an upgrade handler that creates the store if needed */
-function openWithOptionalVersion(version) {
+function openWithOptionalVersion(version, { verbose = false } = {}) {
   return new Promise((resolve, reject) => {
     const req = version ? indexedDB.open(DB_NAME, version) : indexedDB.open(DB_NAME);
 
+    if (verbose) {
+      req.onblocked = () => {
+        warn('open blocked (another tab/connection holds an older version). Waiting for close…');
+      };
+    } else {
+      req.onblocked = () => {};
+    }
+
     req.onupgradeneeded = () => {
       const db = req.result;
-      // Create the store if it's not present yet
+      const before = listStoreNames(db);
       if (!db.objectStoreNames.contains(STORE)) {
         const os = db.createObjectStore(STORE, { keyPath: 'barcode' });
         if (!os.indexNames.contains('lastSeenAt')) {
           os.createIndex('lastSeenAt', 'lastSeenAt', { unique: false });
         }
+        if (verbose) {
+          log(`onupgradeneeded → created store "${STORE}". Stores before=${JSON.stringify(before)} after=${JSON.stringify(listStoreNames(db))}`);
+        }
+      } else if (verbose) {
+        log(`onupgradeneeded → "${STORE}" already present.`);
       }
+
+      // If other connections to this DB exist, ask them to close.
+      db.onversionchange = () => {
+        warn('versionchange on upgraded connection → closing');
+        db.close();
+      };
     };
 
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+    req.onsuccess = () => {
+      const db = req.result;
+      if (verbose) {
+        log(`open success → name=${db.name} version=${db.version} stores=${JSON.stringify(listStoreNames(db))}`);
+      }
+      // Ensure we close this connection if someone else tries to upgrade later.
+      db.onversionchange = () => {
+        warn('versionchange on open connection → closing');
+        db.close();
+      };
+      resolve(db);
+    };
+
+    req.onerror = () => {
+      err('open error:', req.error);
+      reject(req.error);
+    };
   });
+}
+
+/** Attempt an upgrade with retries to handle onblocked cases gracefully */
+async function upgradeWithRetries(nextVersion, { retries = 3, delayMs = 300 } = {}) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      log(`upgrade attempt ${attempt}/${retries} → opening ${DB_NAME} @ version ${nextVersion}`);
+      const db = await openWithOptionalVersion(nextVersion, { verbose: true });
+      return db; // success
+    } catch (e) {
+      warn(`upgrade attempt ${attempt} failed:`, e);
+      if (attempt < retries) {
+        await new Promise(r => setTimeout(r, delayMs * attempt)); // backoff
+      } else {
+        throw e;
+      }
+    }
+  }
 }
 
 /** Ensure the barcodeCache store exists inside the current DB (creates via version bump if missing). */
 async function ensureStoreExists() {
   // First open without forcing an upgrade, so we can inspect current version/stores.
-  const db = await openWithOptionalVersion();
-  if (db.objectStoreNames.contains(STORE)) return db;
+  const db = await openWithOptionalVersion(undefined, { verbose: true });
+  const hasStore = db.objectStoreNames.contains(STORE);
+  if (hasStore) {
+    log(`"${STORE}" present @ version ${db.version}.`);
+    return db;
+  }
 
   // Store missing → bump version by 1 to trigger onupgradeneeded and create the store.
-  const nextVersion = db.version + 1 || 1;
+  const nextVersion = (db.version || 0) + 1;
+  log(`"${STORE}" missing. Will bump version from ${db.version} → ${nextVersion} to create it.`);
   db.close();
-  const upgraded = await openWithOptionalVersion(nextVersion);
+
+  const upgraded = await upgradeWithRetries(nextVersion, { retries: 5, delayMs: 350 });
+  if (!upgraded.objectStoreNames.contains(STORE)) {
+    // Extremely unlikely: upgrade succeeded but store still missing.
+    upgraded.close();
+    throw new Error(`Upgrade completed but "${STORE}" still not found.`);
+  }
+  log(`Upgrade completed. "${STORE}" now present @ version ${upgraded.version}.`);
   return upgraded;
 }
 
@@ -56,9 +133,16 @@ async function tx(mode, fn) {
   return new Promise((resolve, reject) => {
     const t = db.transaction(STORE, mode);
     const store = t.objectStore(STORE);
-    const result = fn(store);
-    t.oncomplete = () => resolve(result);
+    let out;
+    try {
+      out = fn(store);
+    } catch (e) {
+      reject(e);
+      return;
+    }
+    t.oncomplete = () => resolve(out);
     t.onerror = () => reject(t.error);
+    t.onabort = () => reject(t.error || new Error('Transaction aborted'));
   });
 }
 
@@ -139,9 +223,27 @@ export async function upsertRemoteEnrichment(barcode, remote) {
  */
 export async function ensureBarcodeCacheInitialized() {
   try {
-    await ensureStoreExists();
+    log('init → ensuring store exists');
+    const db = await ensureStoreExists();
+    // keep the connection open briefly to reduce immediate re-open churn, then close
+    setTimeout(() => {
+      try {
+        db.close();
+        log('init → closed initial connection');
+      } catch {}
+    }, 0);
   } catch (e) {
     // non-fatal; the app can still run without cache
-    console.warn('[barcodeCache] init failed:', e);
+    warn('init failed:', e);
   }
+}
+
+/** DEV-ONLY: helper to wipe the DB from console during hard-reset tests */
+export function __devDeleteDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.deleteDatabase(DB_NAME);
+    req.onsuccess = () => { log('deleteDatabase success'); resolve(); };
+    req.onerror = () => { err('deleteDatabase error:', req.error); reject(req.error); };
+    req.onblocked = () => { warn('deleteDatabase blocked — close other tabs/instances'); };
+  });
 }

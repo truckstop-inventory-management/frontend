@@ -11,7 +11,7 @@ import FloatingButton from "./components/FloatingAddButton.jsx";
 import { ToastProvider } from "./components/ui/ToastProvider.jsx";
 import "./styles/theme.css";
 
-import {setBarcodeCacheDbName, ensureBarcodeCacheInitialized} from './utils/barcodeCache.js';
+import { setBarcodeCacheDbName, ensureBarcodeCacheInitialized } from "./utils/barcodeCache.js";
 
 export default function App() {
   const [dbReady, setDbReady] = useState(false);
@@ -79,15 +79,30 @@ export default function App() {
     []
   );
 
-  // On mount: init DB + restore token
+  // On mount: **init barcode cache first** to avoid blocked upgrades, then init main DB.
   useEffect(() => {
-    initDB().then(() => setDbReady(true));
-    setBarcodeCacheDbName("truckstop-inventory-db");
-    ensureBarcodeCacheInitialized();
-    const existing = localStorage.getItem("token");
-    if (existing && existing !== "null") {
-      setToken(existing);
-    }
+    (async () => {
+      try {
+        setBarcodeCacheDbName("truckstop-inventory-db");
+        // Ensure the barcodeCache store exists BEFORE other modules open long-lived connections.
+        await ensureBarcodeCacheInitialized();
+
+        // Now init your main app DB as usual.
+        await initDB();
+        setDbReady(true);
+        console.log("[App] DB ready");
+      } catch (e) {
+        console.warn("[App] Startup init encountered an error:", e);
+        // We still mark dbReady so the app isn't stuck; barcode cache is non-fatal.
+        setDbReady(true);
+      }
+
+      // Restore token after DB init
+      const existing = localStorage.getItem("token");
+      if (existing && existing !== "null") {
+        setToken(existing);
+      }
+    })();
   }, []);
 
   // Sync when ready + token present

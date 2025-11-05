@@ -7,7 +7,26 @@ let dbInstance = null;
 export async function initDB() {
   if (dbInstance) return dbInstance;
 
-  dbInstance = await openDB('truckstop-inventory-db', 2, {
+  // ⚙️ Probe current live version & whether 'inventory' exists — no hard-coded version.
+  const probeInfo = await new Promise((resolve, reject) => {
+    const req = indexedDB.open('truckstop-inventory-db'); // open without version to read live state
+    req.onsuccess = () => {
+      const db = req.result;
+      const liveVersion = db.version || 0;
+      const hasInventory = db.objectStoreNames.contains('inventory');
+      try { db.close(); } catch {}
+      resolve({ liveVersion, hasInventory });
+    };
+    req.onerror = () => reject(req.error);
+  });
+
+  // If 'inventory' already exists, open at the live version (avoids VersionError).
+  // If it's missing, bump exactly one version so our upgrade callback can create it.
+  const targetVersion = probeInfo.hasInventory
+    ? Math.max(1, probeInfo.liveVersion)               // open at live
+    : Math.max(1, (probeInfo.liveVersion || 0) + 1);   // bump by +1 to create
+
+  dbInstance = await openDB('truckstop-inventory-db', targetVersion, {
     upgrade(db, _oldVersion, _newVersion, tx) {
       if (!db.objectStoreNames.contains('inventory')) {
         const store = db.createObjectStore('inventory', { keyPath: '_id' });
