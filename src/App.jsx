@@ -11,7 +11,15 @@ import FloatingButton from "./components/FloatingAddButton.jsx";
 import { ToastProvider } from "./components/ui/ToastProvider.jsx";
 import "./styles/theme.css";
 
-import { setBarcodeCacheDbName, ensureBarcodeCacheInitialized } from "./utils/barcodeCache.js";
+import { setBarcodeCacheDbName, ensureBarcodeCacheInitialized, getCachedBarcode } from "./utils/barcodeCache.js";
+
+// DEV-only remote lookup test helpers
+import { fetchRemoteBarcode } from "./utils/fetchRemoteBarcode";
+import { mergeAndSaveBarcodeCache } from "./utils/mergeCacheRecords";
+// DEV: cache-first helper
+import { cacheFirstLookup } from "./utils/cacheFirstLookup";
+// DEV: metrics snapshot helpers
+import { getSnapshot as getLookupMetricsSnapshot, resetMetrics as resetLookupMetrics } from "./utils/lookupMetrics";
 
 export default function App() {
   const [dbReady, setDbReady] = useState(false);
@@ -28,7 +36,7 @@ export default function App() {
     setMetrics({ counts, totals });
   }, []);
 
-  // ✅ UPDATED: accept payload from FloatingAddButton and persist *that* item
+  // ✅ accept payload from FloatingAddButton and persist *that* item
   const handleAddItem = async (payload) => {
     if (isAdding) return; // 🔒 prevent duplicates on rapid clicks
     setIsAdding(true);
@@ -60,9 +68,6 @@ export default function App() {
 
       // Optionally trigger sync immediately (preserves your previous behavior)
       await syncWithServer();
-
-      // If you want to refresh local state here, call getAllItems() and setItems(...)
-      // but InventoryList is already reading from IDB on its own lifecycle.
     } catch (err) {
       console.error("[App] Error adding item:", err);
     } finally {
@@ -111,6 +116,76 @@ export default function App() {
       syncWithServer(token);
     }
   }, [dbReady, token]);
+
+  // Expose console helper for remote lookup → merge → cache verify (idempotent)
+  useEffect(() => {
+    window.debugRemoteLookup ||= async (barcode, opts = {}) => {
+      try {
+        console.log("[DEV] remote fetch start", barcode, opts);
+        const res = await fetchRemoteBarcode(barcode, opts);
+
+        if (!res.ok) {
+          console.warn("[DEV] remote miss/error", res.status, res.error, res.body);
+          return { ok: false, status: res.status, error: res.error, body: res.body };
+        }
+
+        const merged = await mergeAndSaveBarcodeCache(barcode, res.data);
+        const roundTrip = await getCachedBarcode(barcode);
+
+        console.log("[DEV] merged & saved →", merged);
+        console.log("[DEV] cache after save →", roundTrip);
+
+        return { ok: true, merged, cache: roundTrip };
+      } catch (e) {
+        console.error("[DEV] remote lookup failed", e);
+        return { ok: false, status: 0, error: "exception", body: { message: String(e) } };
+      }
+    };
+
+    console.info(
+      "[DEV] window.debugRemoteLookup(barcode, opts) ready — try:",
+      "await window.debugRemoteLookup('049000050103')"
+    );
+  }, []);
+
+  // Expose cache-first coordinator helper
+  useEffect(() => {
+    window.debugCacheFirstLookup ||= async (barcode, opts = {}) => {
+      try {
+        const result = await cacheFirstLookup(barcode, opts);
+        console.log("[DEV] cache-first result →", result);
+        return result;
+      } catch (e) {
+        console.error("[DEV] cache-first failed", e);
+        return { ok: false, hit: false, status: 0, record: null, error: "exception" };
+      }
+    };
+
+    console.info(
+      "[DEV] window.debugCacheFirstLookup(barcode, opts) ready — try:",
+      "await window.debugCacheFirstLookup('049000050103')"
+    );
+  }, []);
+
+  // Expose lookup metrics helpers
+  useEffect(() => {
+    window.debugLookupMetrics ||= () => {
+      const snap = getLookupMetricsSnapshot();
+      console.log("[DEV] lookup metrics snapshot →", snap);
+      return snap;
+    };
+    window.resetLookupMetrics ||= () => {
+      resetLookupMetrics();
+      const snap = getLookupMetricsSnapshot();
+      console.log("[DEV] lookup metrics reset →", snap);
+      return snap;
+    };
+
+    console.info(
+      "[DEV] window.debugLookupMetrics() / window.resetLookupMetrics() ready — try:",
+      "window.debugLookupMetrics()"
+    );
+  }, []);
 
   if (token) {
     const selectedTotal = metrics.totals[selectedView] || 0;
