@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import BarcodeScannerSheet from "../../features/barcode/BarcodeScannerSheet";
 import { upsertBarcode } from "../../utils/barcodeCache.js";
+import { cacheFirstLookup } from "../../utils/cacheFirstLookup"; // ✅ cache-first enrichment
 
 export default function AddItemForm({
                                       newItem,
@@ -12,7 +13,9 @@ export default function AddItemForm({
                                       prefillNote,
                                     }) {
   const [openScan, setOpenScan] = useState(false);
+  const [enriching, setEnriching] = useState(false); // ✅ enrichment indicator
   const barcodeInputRef = useRef(null);
+  const lastEnrichedBarcodeRef = useRef("");
 
   // Focus barcode field when scanner suggests manual entry
   useEffect(() => {
@@ -36,6 +39,51 @@ export default function AddItemForm({
       return next;
     });
   }, [prefill, setNewItem]);
+
+  // 🔎 Prefill enrichment: when barcode changes, run cache-first lookup and fill brand/category/imageURL if empty
+  useEffect(() => {
+    const bc = String(newItem?.barcode || "").trim();
+    if (!bc || bc === lastEnrichedBarcodeRef.current) return;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        setEnriching(true); // start indicator
+        const res = await cacheFirstLookup(bc);
+        if (cancelled) return;
+        if (!res?.ok || !res?.record) return;
+
+        const { brand, category, imageURL } = res.record || {};
+        setNewItem((prev) => {
+          const next = { ...prev };
+          let changed = false;
+
+          if ((next.brand == null || next.brand === "") && brand) {
+            next.brand = brand;
+            changed = true;
+          }
+          if ((next.category == null || next.category === "") && category) {
+            next.category = category;
+            changed = true;
+          }
+          if ((next.imageURL == null || next.imageURL === "") && imageURL) {
+            next.imageURL = imageURL;
+            changed = true;
+          }
+          return changed ? next : prev;
+        });
+
+        lastEnrichedBarcodeRef.current = bc;
+      } catch {
+        // silent — enrichment is best-effort
+      } finally {
+        setEnriching(false); // stop indicator
+      }
+    })();
+
+    return () => { cancelled = true; setEnriching(false); };
+  }, [newItem?.barcode, setNewItem]);
 
   const onChange = (field) => (e) => {
     const val = e.target.value;
@@ -61,6 +109,10 @@ export default function AddItemForm({
   // Light visual for "cached" fields (only when we actually filled them)
   const cachedBadge = prefillNote ? <span className="ml-2 text-[10px] px-1 py-0.5 rounded bg-yellow-100 text-yellow-800">from cache</span> : null;
 
+  // Show brand/category if enrichment produced values OR user starts typing
+  const showBrand = enriching || (newItem?.brand != null && String(newItem.brand).length > 0);
+  const showCategory = enriching || (newItem?.category != null && String(newItem.category).length > 0);
+
   return (
     <form onSubmit={handleSubmit} className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-5">
       <div className="flex items-center gap-2 sm:col-span-5">
@@ -82,6 +134,13 @@ export default function AddItemForm({
         >
           Scan
         </button>
+      </div>
+
+      {/* small enrichment status row */}
+      <div className="sm:col-span-5" aria-live="polite">
+        {enriching ? (
+          <p className="text-xs text-gray-500 mt-[-4px] mb-[-2px]">Looking up product details…</p>
+        ) : null}
       </div>
 
       {prefillNote ? (
@@ -129,6 +188,32 @@ export default function AddItemForm({
         />
         {cachedBadge}
       </div>
+
+      {/* ✅ Brand (optional, appears when enrichment/user present) */}
+      {showBrand ? (
+        <input
+          className="rounded border px-2 py-1"
+          placeholder="Brand (auto-filled)"
+          value={newItem?.brand ?? ""}
+          onChange={onChange("brand")}
+          aria-label="Brand"
+        />
+      ) : (
+        <div className="hidden sm:block" />
+      )}
+
+      {/* ✅ Category (optional, appears when enrichment/user present) */}
+      {showCategory ? (
+        <input
+          className="rounded border px-2 py-1"
+          placeholder="Category (auto-filled)"
+          value={newItem?.category ?? ""}
+          onChange={onChange("category")}
+          aria-label="Category"
+        />
+      ) : (
+        <div className="hidden sm:block" />
+      )}
 
       <select
         className="rounded border px-2 py-1"

@@ -1,5 +1,5 @@
 // src/App.jsx
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, Suspense } from "react";
 import { initDB, addItem } from "./utils/db";
 import { syncWithServer } from "./utils/sync";   // 🔄 sync logic
 import { LOCATION } from "./utils/location";
@@ -20,6 +20,8 @@ import { mergeAndSaveBarcodeCache } from "./utils/mergeCacheRecords";
 import { cacheFirstLookup } from "./utils/cacheFirstLookup";
 // DEV: metrics snapshot helpers
 import { getSnapshot as getLookupMetricsSnapshot, resetMetrics as resetLookupMetrics } from "./utils/lookupMetrics";
+
+const DevMetricsPanel = React.lazy(() => import('./dev/DevMetricsPanel.jsx'));
 
 export default function App() {
   const [dbReady, setDbReady] = useState(false);
@@ -191,6 +193,7 @@ export default function App() {
     const selectedTotal = metrics.totals[selectedView] || 0;
 
     return (
+
       <ToastProvider>
         <div style={{ paddingTop: 48 }}>
           {/* Header */}
@@ -243,9 +246,22 @@ export default function App() {
           {/* The FAB now passes a payload; this handler consumes it */}
           <FloatingButton onClick={handleAddItem} />
         </div>
+
+        {/* Dev-only metrics panel (toggle with ?metrics=1 or window.toggleMetricsDashboardUI()) */}
+        <Suspense fallback={null}>
+          <DevMetricsPanel />
+        </Suspense>
       </ToastProvider>
     );
   }
 
-  return <LoginForm onLogin={setToken} />;
+  return (
+    <>
+      <LoginForm onLogin={setToken} />
+      {/* Dev-only metrics panel also available on login screen */}
+      <Suspense fallback={null}>
+        <DevMetricsPanel />
+      </Suspense>
+    </>
+  );
 }
