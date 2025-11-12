@@ -1,8 +1,21 @@
 // src/components/MetricsDashboard.jsx
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import React, {
+  useEffect,
+  useMemo,
+  useState,
+  useCallback,
+  useRef,
+  forwardRef,
+} from 'react';
 import * as lookupMetrics from '../utils/lookupMetrics';
 import {
-  LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  LineChart,
+  Line,
+  CartesianGrid,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
 } from 'recharts';
 
 function formatMs(val) {
@@ -19,6 +32,15 @@ function Stat({ label, value, subtle }) {
   );
 }
 
+// Properly forward ref so our chart mount observer works reliably
+const Card = forwardRef(function Card({ children, className = '' }, ref) {
+  return (
+    <div ref={ref} className={`rounded-2xl border border-gray-200 bg-white shadow-sm p-4 ${className}`}>
+      {children}
+    </div>
+  );
+});
+
 export default function MetricsDashboard({ pollMs = 5000, maxPoints = 20 }) {
   const [snapshot, setSnapshot] = useState(() => {
     try { return lookupMetrics.getSnapshot ? lookupMetrics.getSnapshot() : null; } catch { return null; }
@@ -27,21 +49,50 @@ export default function MetricsDashboard({ pollMs = 5000, maxPoints = 20 }) {
   const [trend, setTrend] = useState([]);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
+  // New: pause + interval control (pulling some polish from tomorrow’s plan)
+  const [paused, setPaused] = useState(false);
+  const [intervalMs, setIntervalMs] = useState(pollMs);
+
+  // Chart mount safety
+  const [chartReady, setChartReady] = useState(false);
+  const chartRef = useRef(null);
+  useEffect(() => {
+    if (!chartRef.current) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect || {};
+        if ((width ?? 0) > 0 && (height ?? 0) > 0) setChartReady(true);
+      }
+    });
+    ro.observe(chartRef.current);
+    return () => ro.disconnect();
+  }, []);
+
   const refresh = useCallback(() => {
     try {
-      if (lookupMetrics.getSnapshot) {
-        const snap = lookupMetrics.getSnapshot();
-        setSnapshot(snap);
-        setLastUpdated(new Date());
+      if (!lookupMetrics.getSnapshot) return;
+      const snap = lookupMetrics.getSnapshot();
+      setSnapshot(snap);
+      setLastUpdated(new Date());
 
-        const p50 = snap?.latency?.p50;
-        const p90 = snap?.latency?.p90;
-        if (typeof p50 === 'number' || typeof p90 === 'number') {
-          setTrend(prev => [...prev, { t: Date.now(), p50, p90 }].slice(-maxPoints));
-        }
+      const p50 = snap?.latency?.p50;
+      const p90 = snap?.latency?.p90;
+
+      if (typeof p50 === 'number' || typeof p90 === 'number') {
+        const nowTs = Date.now();
+        setTrend(prev => {
+          const last = prev[prev.length - 1];
+          const tooSoon = last ? (nowTs - last.t) < Math.max(0, intervalMs - 100) : false;
+          const sameValues = last ? (last.p50 === p50 && last.p90 === p90) : false;
+          if (last && tooSoon && sameValues) return prev;
+          const next = [...prev, { t: nowTs, p50, p90 }];
+          return next.slice(-maxPoints);
+        });
       }
-    } catch {}
-  }, [maxPoints]);
+    } catch {
+      // noop
+    }
+  }, [intervalMs, maxPoints]);
 
   const reset = useCallback(() => {
     try {
@@ -54,12 +105,14 @@ export default function MetricsDashboard({ pollMs = 5000, maxPoints = 20 }) {
     } catch {}
   }, []);
 
+  // Interval timer (respects pause + user-chosen interval)
   useEffect(() => {
-    const id = setInterval(refresh, pollMs);
+    if (paused) return;
+    const id = setInterval(refresh, intervalMs);
     return () => clearInterval(id);
-  }, [pollMs, refresh]);
+  }, [paused, intervalMs, refresh]);
 
-  // dev helpers
+  // Dev helpers + keyboard shortcuts
   useEffect(() => {
     window.showMetricsDashboard = () => {
       try {
@@ -72,8 +125,22 @@ export default function MetricsDashboard({ pollMs = 5000, maxPoints = 20 }) {
       } catch (e) { console.error('[MetricsDashboard] showMetricsDashboard error:', e); }
     };
     window.debugLookupSamples = () => trend.map(d => ({ t: d.t, p50: d.p50, p90: d.p90 }));
-    return () => { delete window.showMetricsDashboard; delete window.debugLookupSamples; };
-  }, [trend]);
+
+    const onKey = (e) => {
+      // Ignore if typing
+      if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)) return;
+      if (e.key === 'r' || e.key === 'R') refresh();
+      if (e.key === 'x' || e.key === 'X') reset();
+      if (e.key === 'v' || e.key === 'V') setShowAdvanced(v => !v);
+      if (e.key === 'p' || e.key === 'P') setPaused(p => !p);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      delete window.showMetricsDashboard;
+      delete window.debugLookupSamples;
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [refresh, reset, trend]);
 
   const stats = useMemo(() => {
     const s = snapshot || {};
@@ -95,31 +162,90 @@ export default function MetricsDashboard({ pollMs = 5000, maxPoints = 20 }) {
 
   const hasTrend = trend.length >= 3;
 
-  const Card = ({ children, className = '' }) => (
-    <div className={`rounded-2xl border border-gray-200 bg-white shadow-sm p-4 ${className}`}>
-      {children}
-    </div>
-  );
+  // Export JSON (snapshot + table + samples)
+  const exportJson = useCallback(() => {
+    try {
+      const data = {
+        exportedAt: new Date().toISOString(),
+        snapshot: lookupMetrics.getSnapshot ? lookupMetrics.getSnapshot() : null,
+        perBarcode: typeof lookupMetrics.getPerBarcodeStats === 'function' ? lookupMetrics.getPerBarcodeStats() : [],
+        samples: typeof lookupMetrics.getSamples === 'function' ? lookupMetrics.getSamples() : [],
+      };
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `lookup-metrics-${Date.now()}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error('[MetricsDashboard] exportJson failed:', e);
+    }
+  }, []);
 
   return (
     <div className="grid gap-4 px-3 pb-[env(safe-area-inset-bottom)]">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="m-0 text-lg font-bold">Lookup Metrics</h2>
-        <div className="flex gap-2">
-          <button onClick={refresh} className="rounded-xl border border-gray-300 px-3 py-1.5 text-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={refresh}
+            className="rounded-xl border border-gray-300 px-3 py-1.5 text-sm"
+            title="Fetch the latest metrics snapshot (R)"
+            aria-label="Refresh metrics"
+          >
             Refresh
           </button>
-          <button onClick={reset} className="rounded-xl border border-gray-300 px-3 py-1.5 text-sm">
+          <button
+            onClick={reset}
+            className="rounded-xl border border-gray-300 px-3 py-1.5 text-sm"
+            title="Clear counters and latency samples (X)"
+            aria-label="Reset metrics"
+          >
             Reset
           </button>
           <button
             onClick={() => setShowAdvanced(v => !v)}
             aria-expanded={showAdvanced}
             className="rounded-xl border border-gray-300 px-3 py-1.5 text-sm"
-            title="Show advanced details"
+            title={showAdvanced ? 'Hide per-barcode statistics (V)' : 'Show per-barcode statistics (V)'}
+            aria-label={showAdvanced ? 'Hide per-barcode stats' : 'View per-barcode stats'}
           >
-            {showAdvanced ? 'Hide Details' : 'Show Details'}
+            {showAdvanced ? 'Hide Per-Barcode Stats' : 'View Per-Barcode Stats'}
+          </button>
+
+          {/* Pause / resume + interval selector */}
+          <button
+            onClick={() => setPaused(p => !p)}
+            className="rounded-xl border border-gray-300 px-3 py-1.5 text-sm"
+            title="Pause or resume auto-refresh (P)"
+            aria-pressed={paused}
+          >
+            {paused ? 'Resume Auto-Refresh' : 'Pause Auto-Refresh'}
+          </button>
+          <select
+            className="rounded-xl border border-gray-300 px-2 py-1.5 text-sm"
+            value={intervalMs}
+            onChange={(e) => setIntervalMs(Number(e.target.value))}
+            title="Auto-refresh interval"
+            aria-label="Auto-refresh interval"
+          >
+            <option value={2000}>2s</option>
+            <option value={5000}>5s</option>
+            <option value={10000}>10s</option>
+          </select>
+
+          {/* Export JSON */}
+          <button
+            onClick={exportJson}
+            className="rounded-xl border border-gray-300 px-3 py-1.5 text-sm"
+            title="Export snapshot, per-barcode stats, and latency samples"
+            aria-label="Export metrics as JSON"
+          >
+            Export JSON
           </button>
         </div>
       </div>
@@ -131,6 +257,9 @@ export default function MetricsDashboard({ pollMs = 5000, maxPoints = 20 }) {
         <Card><Stat label="Errors" value={stats.counts.errors} /></Card>
       </div>
 
+      {/* Divider */}
+      <div className="mx-1 border-t border-gray-200" role="separator" aria-hidden="true" />
+
       {/* Current latency snapshot */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Card><Stat label="Latency p50" value={formatMs(stats.latency.p50)} /></Card>
@@ -138,17 +267,15 @@ export default function MetricsDashboard({ pollMs = 5000, maxPoints = 20 }) {
       </div>
 
       {/* Trend card */}
-      <Card>
+      <Card ref={chartRef}>
         <div className="flex items-baseline justify-between">
-          <div className="font-semibold">
-            Latency Trend (last {Math.min(trend.length, maxPoints)} pts)
-          </div>
-          <div className="text-xs text-gray-500">
-            p50 & p90; auto-refresh {Math.round(pollMs / 1000)}s
+          <div className="font-semibold">Latency Trend (last {Math.min(trend.length, maxPoints)} pts)</div>
+          <div className="text-xs text-gray-500" title="Updated automatically at the chosen interval">
+            p50 &amp; p90 · auto-refresh {Math.round(intervalMs / 1000)}s
           </div>
         </div>
 
-        {hasTrend ? (
+        {hasTrend && chartReady ? (
           <div className="mt-2 h-44 w-full">
             <ResponsiveContainer>
               <LineChart data={trend}>
@@ -171,19 +298,25 @@ export default function MetricsDashboard({ pollMs = 5000, maxPoints = 20 }) {
               </LineChart>
             </ResponsiveContainer>
           </div>
-        ) : (
-          <div className="mt-2 text-xs text-gray-500">
-            Insufficient data — run a few lookups to populate the trend.
+        ) : !hasTrend ? (
+          <div className="mt-4 flex flex-col items-center justify-center py-6 text-xs text-gray-500 animate-pulse">
+            <svg className="mb-2 h-6 w-6 text-gray-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+              <circle cx="12" cy="12" r="10" strokeWidth="2" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6l3 3" />
+            </svg>
+            <span>Collecting lookup samples…</span>
           </div>
+        ) : (
+          <div className="mt-4 text-xs text-gray-500">Loading chart…</div>
         )}
       </Card>
 
-      {/* Advanced details (collapsible) */}
+      {/* Advanced details */}
       {showAdvanced && (
         <Card>
           <div className="flex items-baseline justify-between">
-            <div className="font-semibold">Advanced Details</div>
-            <div className="text-xs text-gray-500">Per-barcode snapshot</div>
+            <div className="font-semibold">Per-Barcode Statistics</div>
+            <div className="text-xs text-gray-500">Hits · Misses · Errors · Last seen</div>
           </div>
 
           {Array.isArray(perBarcode) ? (
@@ -197,6 +330,7 @@ export default function MetricsDashboard({ pollMs = 5000, maxPoints = 20 }) {
                     <th className="px-2 py-1.5">Misses</th>
                     <th className="px-2 py-1.5">Errors</th>
                     <th className="px-2 py-1.5">Last Seen</th>
+                    <th className="px-2 py-1.5">Actions</th>
                   </tr>
                   </thead>
                   <tbody>
@@ -208,6 +342,21 @@ export default function MetricsDashboard({ pollMs = 5000, maxPoints = 20 }) {
                       <td className="px-2 py-1.5">{r.errors ?? 0}</td>
                       <td className="px-2 py-1.5">
                         {r.lastSeenAt ? new Date(r.lastSeenAt).toLocaleString() : '—'}
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <button
+                          className="rounded-md border border-gray-300 px-2 py-1 text-xs"
+                          title="Re-run cache-first lookup for this barcode (dev)"
+                          onClick={() => {
+                            try {
+                              if (typeof window.debugCacheFirstLookup === 'function' && r.barcode) {
+                                window.debugCacheFirstLookup(r.barcode);
+                              }
+                            } catch {}
+                          }}
+                        >
+                          Re-run
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -226,7 +375,7 @@ export default function MetricsDashboard({ pollMs = 5000, maxPoints = 20 }) {
       )}
 
       <div className="text-xs text-gray-500">
-        Last updated: {lastUpdated.toLocaleTimeString()} • Auto-refresh: every {Math.round(pollMs / 1000)}s
+        Last updated: {lastUpdated.toLocaleTimeString()} • Auto-refresh: {paused ? 'paused' : `${Math.round(intervalMs / 1000)}s`}
       </div>
     </div>
   );
