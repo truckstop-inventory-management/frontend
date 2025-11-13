@@ -142,3 +142,62 @@ export const reset = resetMetrics;
 export function getSamples() {
   return metrics.samples.slice();
 }
+
+// --- Histogram helper (client-side) ---------------------------------------
+/**
+ * Build a latency histogram from rolling samples.
+ * @param {number[]} bins - ascending edges in ms, e.g. [0,10,25,50,100,250,500,1000]
+ * Produces bins: [0-10), [10-25), ... , [1000-∞)
+ * Returns: Array<{label, from, to, count, pct}>
+ */
+export function getHistogram(bins = [0,10,25,50,100,250,500,1000]) {
+  try {
+    const samples = typeof getSamples === 'function' ? getSamples() : [];
+    const N = samples.length;
+    const edges = Array.isArray(bins) && bins.length
+      ? [...bins].sort((a,b)=>a-b)
+      : [0,10,25,50,100,250,500,1000];
+
+    const counts = new Array(edges.length + 1).fill(0); // last bin is > last edge
+
+    for (let i = 0; i < N; i++) {
+      const s = samples[i];
+      // Support both numeric samples (current design) and future object-shaped samples
+      const ms = (typeof s === 'number')
+        ? s
+        : (typeof s?.latencyMs === 'number'
+          ? s.latencyMs
+          : (typeof s?.meta?.latencyMs === 'number' ? s.meta.latencyMs : null));
+      if (ms == null || Number.isNaN(ms)) continue;
+
+      // find the first edge strictly greater than ms -> bin is its index
+      let idx = edges.findIndex(e => ms < e);
+      if (idx === -1) idx = edges.length; // overflow bin
+      counts[idx]++;
+    }
+
+    // shape result with labels
+    const result = [];
+    const denom = counts.reduce((a,b)=>a+b,0) || 1;
+    for (let i = 0; i < counts.length; i++) {
+      const from = i === 0 ? 0 : edges[i-1];
+      const to = i < edges.length ? edges[i] : Infinity;
+      const label = i < edges.length ? `${from}–${to} ms` : `>${edges[edges.length-1]} ms`;
+      const count = counts[i];
+      const pct = +((count / denom) * 100).toFixed(1);
+      result.push({ label, from, to, count, pct });
+    }
+    return result;
+  } catch (err) {
+    // Never break the dashboard—return empty bins for given edges.
+    const edges = Array.isArray(bins) && bins.length ? [...bins].sort((a,b)=>a-b) : [0,10,25,50,100,250,500,1000];
+    const empty = [];
+    for (let i = 0; i <= edges.length; i++) {
+      const from = i === 0 ? 0 : edges[i-1];
+      const to = i < edges.length ? edges[i] : Infinity;
+      const label = i < edges.length ? `${from}–${to} ms` : `>${edges[edges.length-1]} ms`;
+      empty.push({ label, from, to, count: 0, pct: 0 });
+    }
+    return empty;
+  }
+}

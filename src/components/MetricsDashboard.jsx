@@ -16,6 +16,9 @@ import {
   YAxis,
   Tooltip,
   ResponsiveContainer,
+  // Added for latency histogram
+  BarChart,
+  Bar,
 } from 'recharts';
 
 function formatMs(val) {
@@ -41,6 +44,101 @@ const Card = forwardRef(function Card({ children, className = '' }, ref) {
   );
 });
 
+/* ---------- Helpers for histogram + KPI split pills (non-destructive) ---------- */
+
+const BIN_EDGES = [0, 10, 25, 50, 100, 250, 500, 1000];
+
+function useLast20Split(samples) {
+  // Heuristic: <=5ms ≈ local cache hit; others ≈ remote
+  const FAST_MS = 5;
+  return useMemo(() => {
+    const last = samples.slice(-20);
+    const n = last.length || 1;
+    let local = 0;
+    for (const s of last) {
+      const ms = typeof s === 'number'
+        ? s
+        : typeof s?.latencyMs === 'number'
+          ? s.latencyMs
+          : (s?.meta && typeof s.meta.latencyMs === 'number' ? s.meta.latencyMs : Infinity);
+      if (ms <= FAST_MS) local++;
+    }
+    const remote = last.length - local;
+    const localPct = Math.round((local / n) * 100);
+    const remotePct = 100 - localPct;
+    return { local, remote, localPct, remotePct, count: last.length };
+  }, [samples]);
+}
+
+function SplitPills({ samples }) {
+  const split = useLast20Split(samples);
+  if (split.count === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-2 text-[11px] text-gray-500">
+      <span className="px-2 py-0.5 rounded-full bg-gray-100 border border-gray-200">
+        last {split.count}: <strong>{split.localPct}%</strong> local / <strong>{split.remotePct}%</strong> remote <span className="opacity-60">(est.)</span>
+      </span>
+    </div>
+  );
+}
+
+function HistogramCard({ samples }) {
+  const total = samples.length;
+  const show = total >= 10;
+
+  // Build data via optional helper in lookupMetrics (keeps math centralized)
+  const data = useMemo(() => {
+    try {
+      if (typeof lookupMetrics.getHistogram === 'function') {
+        return lookupMetrics.getHistogram(BIN_EDGES);
+      }
+    } catch {}
+    // Fallback empty bins if helper not present
+    return BIN_EDGES.map((edge, i) => {
+      const next = BIN_EDGES[i + 1];
+      return {
+        label: next ? `${edge}–${next} ms` : `>${BIN_EDGES[BIN_EDGES.length - 1]} ms`,
+        from: edge,
+        to: next ?? Infinity,
+        count: 0,
+        pct: 0,
+      };
+    }).concat();
+  }, [samples.length]);
+
+  return (
+    <Card>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className="font-semibold">Latency Histogram</div>
+          <div className="text-xs text-gray-500">(appears after 10+ samples)</div>
+        </div>
+      </div>
+
+      {/* Reserve height to avoid layout shift whether we show chart or placeholder */}
+      <div className="mt-2 h-40 w-full">
+        {!show ? (
+          <div className="h-full flex items-center text-xs text-gray-500 italic">
+            Collecting lookup samples…
+          </div>
+        ) : (
+          <ResponsiveContainer>
+            <BarChart data={data} margin={{ top: 4, left: 8, right: 8, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="label" interval={0} tick={{ fontSize: 10 }} />
+              <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
+              <Tooltip formatter={(v, n) => [v, n === 'count' ? 'count' : n]} />
+              <Bar dataKey="count" isAnimationActive={false} radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+/* ----------------------------------------------------------------------------- */
+
 export default function MetricsDashboard({ pollMs = 5000, maxPoints = 20 }) {
   const [snapshot, setSnapshot] = useState(() => {
     try { return lookupMetrics.getSnapshot ? lookupMetrics.getSnapshot() : null; } catch { return null; }
@@ -49,7 +147,7 @@ export default function MetricsDashboard({ pollMs = 5000, maxPoints = 20 }) {
   const [trend, setTrend] = useState([]);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
-  // New: pause + interval control (pulling some polish from tomorrow’s plan)
+  // New: pause + interval control
   const [paused, setPaused] = useState(false);
   const [intervalMs, setIntervalMs] = useState(pollMs);
 
@@ -142,6 +240,17 @@ export default function MetricsDashboard({ pollMs = 5000, maxPoints = 20 }) {
     };
   }, [refresh, reset, trend]);
 
+  // Micro-profiling hook (flag slow remote p90 > 1000 ms)
+  useEffect(() => {
+    try {
+      const p90 = snapshot?.latency?.p90;
+      if (typeof p90 === 'number' && p90 > 1000) {
+        // eslint-disable-next-line no-console
+        console.warn('[metrics] slow remote (p90 > 1000 ms)', { p90 });
+      }
+    } catch {}
+  }, [snapshot]);
+
   const stats = useMemo(() => {
     const s = snapshot || {};
     return {
@@ -159,6 +268,12 @@ export default function MetricsDashboard({ pollMs = 5000, maxPoints = 20 }) {
     } catch {}
     return null;
   }, [snapshot]);
+
+  // Memoize samples once (prevents multiple calls in a single render)
+  const samples = useMemo(
+    () => (typeof lookupMetrics.getSamples === 'function' ? (lookupMetrics.getSamples() || []) : []),
+    [snapshot] // samples change whenever new snapshot is recorded
+  );
 
   const hasTrend = trend.length >= 3;
 
@@ -182,6 +297,41 @@ export default function MetricsDashboard({ pollMs = 5000, maxPoints = 20 }) {
       URL.revokeObjectURL(url);
     } catch (e) {
       console.error('[MetricsDashboard] exportJson failed:', e);
+    }
+  }, []);
+
+  // Export CSV (per-barcode table)
+  const exportCsv = useCallback(() => {
+    try {
+      if (typeof lookupMetrics.getPerBarcodeStats !== 'function') return;
+      const rows = lookupMetrics.getPerBarcodeStats() || [];
+      const header = ['barcode', 'hits', 'misses', 'errors', 'lastSeenAtISO'];
+      const lines = [header.join(',')];
+      for (const r of rows) {
+        const lastIso = r.lastSeenAt ? new Date(r.lastSeenAt).toISOString() : '';
+        const fields = [
+          r.barcode ?? '',
+          r.hits ?? 0,
+          r.misses ?? 0,
+          r.errors ?? 0,
+          lastIso,
+        ].map(v => {
+          const s = String(v);
+          return /[,"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+        });
+        lines.push(fields.join(','));
+      }
+      const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `lookup-metrics-per-barcode-${Date.now()}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error('[MetricsDashboard] exportCsv failed:', e);
     }
   }, []);
 
@@ -247,6 +397,16 @@ export default function MetricsDashboard({ pollMs = 5000, maxPoints = 20 }) {
           >
             Export JSON
           </button>
+
+          {/* Export CSV */}
+          <button
+            onClick={exportCsv}
+            className="rounded-xl border border-gray-300 px-3 py-1.5 text-sm"
+            title="Export per-barcode stats as CSV"
+            aria-label="Export per-barcode stats as CSV"
+          >
+            Export CSV
+          </button>
         </div>
       </div>
 
@@ -256,6 +416,9 @@ export default function MetricsDashboard({ pollMs = 5000, maxPoints = 20 }) {
         <Card><Stat label="Misses" value={stats.counts.misses} /></Card>
         <Card><Stat label="Errors" value={stats.counts.errors} /></Card>
       </div>
+
+      {/* Pills near KPIs */}
+      <SplitPills samples={samples} />
 
       {/* Divider */}
       <div className="mx-1 border-t border-gray-200" role="separator" aria-hidden="true" />
@@ -311,6 +474,9 @@ export default function MetricsDashboard({ pollMs = 5000, maxPoints = 20 }) {
         )}
       </Card>
 
+      {/* Histogram card */}
+      <HistogramCard samples={samples} />
+
       {/* Advanced details */}
       {showAdvanced && (
         <Card>
@@ -344,19 +510,23 @@ export default function MetricsDashboard({ pollMs = 5000, maxPoints = 20 }) {
                         {r.lastSeenAt ? new Date(r.lastSeenAt).toLocaleString() : '—'}
                       </td>
                       <td className="px-2 py-1.5">
-                        <button
-                          className="rounded-md border border-gray-300 px-2 py-1 text-xs"
-                          title="Re-run cache-first lookup for this barcode (dev)"
-                          onClick={() => {
-                            try {
-                              if (typeof window.debugCacheFirstLookup === 'function' && r.barcode) {
-                                window.debugCacheFirstLookup(r.barcode);
-                              }
-                            } catch {}
-                          }}
-                        >
-                          Re-run
-                        </button>
+                        {import.meta && import.meta.env && import.meta.env.DEV ? (
+                          <button
+                            className="rounded-md border border-gray-300 px-2 py-1 text-xs"
+                            title="Re-run cache-first lookup for this barcode (dev)"
+                            onClick={() => {
+                              try {
+                                if (typeof window.debugCacheFirstLookup === 'function' && r.barcode) {
+                                  window.debugCacheFirstLookup(r.barcode);
+                                }
+                              } catch {}
+                            }}
+                          >
+                            Re-run
+                          </button>
+                        ) : (
+                          <span className="text-gray-400 text-xs">—</span>
+                        )}
                       </td>
                     </tr>
                   ))}
