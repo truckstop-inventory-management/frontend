@@ -1,5 +1,7 @@
 // src/utils/lookupMetrics.js
 
+import { postMetrics } from './metricsUploader';
+
 // -----------------------------------------------------------------------------
 // In-memory lookup metrics (client-side only)
 // Counts: hits / misses / errors
@@ -73,6 +75,8 @@ export function recordLatency(ms = 0) {
  * type ∈ {'hits','misses','errors'}
  */
 export function recordEvent(type, barcode, latencyMs = 0) {
+  const now = Date.now();
+
   if (type === 'hits' || type === 'misses' || type === 'errors') {
     metrics[type] = (metrics[type] || 0) + 1;
   }
@@ -91,7 +95,21 @@ export function recordEvent(type, barcode, latencyMs = 0) {
     if (type === 'hits' || type === 'misses' || type === 'errors') {
       row[type] = (row[type] || 0) + 1;
     }
-    row.lastSeenAt = Date.now();
+    row.lastSeenAt = now;
+  }
+
+  // Phase 7 scaffold: enqueue for server-side persistence
+  try {
+    if (typeof postMetrics === 'function') {
+      postMetrics({
+        type,
+        barcode: barcode || null,
+        latencyMs: latencyMs != null ? latencyMs : null,
+        timestamp: now,
+      });
+    }
+  } catch {
+    // Never let upload issues break local metrics
   }
 }
 

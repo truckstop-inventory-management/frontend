@@ -7,7 +7,9 @@ import React, {
   useRef,
   forwardRef,
 } from 'react';
+import { motion } from 'framer-motion';
 import * as lookupMetrics from '../utils/lookupMetrics';
+import * as metricsUploader from '../utils/metricsUploader';
 import {
   LineChart,
   Line,
@@ -16,7 +18,6 @@ import {
   YAxis,
   Tooltip,
   ResponsiveContainer,
-  // Added for latency histogram
   BarChart,
   Bar,
 } from 'recharts';
@@ -73,12 +74,18 @@ function useLast20Split(samples) {
 function SplitPills({ samples }) {
   const split = useLast20Split(samples);
   if (split.count === 0) return null;
+
   return (
-    <div className="flex flex-wrap gap-2 text-[11px] text-gray-500">
+    <motion.div
+      className="flex flex-wrap gap-2 text-[11px] text-gray-500"
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25 }}
+    >
       <span className="px-2 py-0.5 rounded-full bg-gray-100 border border-gray-200">
         last {split.count}: <strong>{split.localPct}%</strong> local / <strong>{split.remotePct}%</strong> remote <span className="opacity-60">(est.)</span>
       </span>
-    </div>
+    </motion.div>
   );
 }
 
@@ -125,7 +132,13 @@ function HistogramCard({ samples }) {
           <ResponsiveContainer>
             <BarChart data={data} margin={{ top: 4, left: 8, right: 8, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="label" interval={0} tick={{ fontSize: 10 }} />
+              <XAxis
+                dataKey="label"
+                interval={0}
+                tick={{ fontSize: 10 }}
+                angle={-20}
+                textAnchor="end"
+              />
               <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
               <Tooltip formatter={(v, n) => [v, n === 'count' ? 'count' : n]} />
               <Bar dataKey="count" isAnimationActive={false} radius={[4, 4, 0, 0]} />
@@ -147,9 +160,12 @@ export default function MetricsDashboard({ pollMs = 5000, maxPoints = 20 }) {
   const [trend, setTrend] = useState([]);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
-  // New: pause + interval control
+  // pause + interval control
   const [paused, setPaused] = useState(false);
   const [intervalMs, setIntervalMs] = useState(pollMs);
+
+  // auto-upload toggle (dev-only visible)
+  const [autoUpload, setAutoUpload] = useState(false);
 
   // Chart mount safety
   const [chartReady, setChartReady] = useState(false);
@@ -203,12 +219,41 @@ export default function MetricsDashboard({ pollMs = 5000, maxPoints = 20 }) {
     } catch {}
   }, []);
 
-  // Interval timer (respects pause + user-chosen interval)
+  // Interval timer (respects pause + user-chosen interval + auto-upload)
   useEffect(() => {
     if (paused) return;
-    const id = setInterval(refresh, intervalMs);
-    return () => clearInterval(id);
-  }, [paused, intervalMs, refresh]);
+
+    let cancelled = false;
+
+    const tick = async () => {
+      if (cancelled) return;
+
+      if (
+        autoUpload &&
+        metricsUploader &&
+        typeof metricsUploader.flushQueuedMetrics === 'function'
+      ) {
+        try {
+          await metricsUploader.flushQueuedMetrics();
+        } catch (err) {
+          if (import.meta && import.meta.env && import.meta.env.DEV) {
+            // eslint-disable-next-line no-console
+            console.warn('[MetricsDashboard] auto-upload flush failed', err);
+          }
+        }
+      }
+
+      if (!cancelled) {
+        refresh();
+      }
+    };
+
+    const id = setInterval(tick, intervalMs);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [paused, intervalMs, refresh, autoUpload]);
 
   // Dev helpers + keyboard shortcuts
   useEffect(() => {
@@ -272,8 +317,18 @@ export default function MetricsDashboard({ pollMs = 5000, maxPoints = 20 }) {
   // Memoize samples once (prevents multiple calls in a single render)
   const samples = useMemo(
     () => (typeof lookupMetrics.getSamples === 'function' ? (lookupMetrics.getSamples() || []) : []),
-    [snapshot] // samples change whenever new snapshot is recorded
+    [snapshot]
   );
+
+  const pendingCount = useMemo(() => {
+    try {
+      return typeof metricsUploader.getPendingCount === 'function'
+        ? metricsUploader.getPendingCount()
+        : 0;
+    } catch {
+      return 0;
+    }
+  }, [snapshot]);
 
   const hasTrend = trend.length >= 3;
 
@@ -334,6 +389,23 @@ export default function MetricsDashboard({ pollMs = 5000, maxPoints = 20 }) {
       console.error('[MetricsDashboard] exportCsv failed:', e);
     }
   }, []);
+
+  const uploadPending = useCallback(async () => {
+    try {
+      if (!metricsUploader || typeof metricsUploader.flushQueuedMetrics !== 'function') return;
+      const res = await metricsUploader.flushQueuedMetrics();
+      if (import.meta && import.meta.env && import.meta.env.DEV) {
+        // eslint-disable-next-line no-console
+        console.info('[MetricsDashboard] flushed metrics queue', res);
+      }
+      refresh();
+    } catch (e) {
+      if (import.meta && import.meta.env && import.meta.env.DEV) {
+        // eslint-disable-next-line no-console
+        console.error('[MetricsDashboard] flushQueuedMetrics failed', e);
+      }
+    }
+  }, [refresh]);
 
   return (
     <div className="grid gap-4 px-3 pb-[env(safe-area-inset-bottom)]">
@@ -407,6 +479,31 @@ export default function MetricsDashboard({ pollMs = 5000, maxPoints = 20 }) {
           >
             Export CSV
           </button>
+
+          {/* Dev-only: Auto-upload toggle + manual upload button */}
+          {import.meta && import.meta.env && import.meta.env.DEV && (
+            <>
+              <button
+                onClick={() => setAutoUpload(v => !v)}
+                className="rounded-xl border border-gray-300 px-3 py-1.5 text-sm"
+                title="Toggle auto-upload of queued metrics on each refresh tick"
+                aria-pressed={autoUpload}
+              >
+                {autoUpload ? 'Auto-Upload: On' : 'Auto-Upload: Off'}
+              </button>
+              <button
+                onClick={uploadPending}
+                className="rounded-xl border border-gray-300 px-3 py-1.5 text-sm"
+                title="Upload queued metrics to the server (dev only)"
+                aria-label="Upload queued metrics"
+                disabled={!pendingCount}
+              >
+                {pendingCount
+                  ? `Upload pending samples (${pendingCount})`
+                  : 'No pending samples'}
+              </button>
+            </>
+          )}
         </div>
       </div>
 
