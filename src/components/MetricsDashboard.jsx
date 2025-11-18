@@ -27,6 +27,24 @@ function formatMs(val) {
   return val < 10 ? `${val.toFixed(1)} ms` : `${Math.round(val)} ms`;
 }
 
+function formatRelativeTime(timestamp) {
+  if (!timestamp) return 'never';
+
+  const now = Date.now();
+  const deltaMs = now - timestamp;
+
+  if (deltaMs < 0) return 'just now';
+
+  const seconds = Math.floor(deltaMs / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+
+  if (hours > 0) return `${hours}h ${minutes % 60}m ago`;
+  if (minutes > 0) return `${minutes}m ${seconds % 60}s ago`;
+  if (seconds > 5) return `${seconds}s ago`;
+  return 'just now';
+}
+
 function Stat({ label, value, subtle }) {
   return (
     <div className="grid gap-1">
@@ -164,8 +182,26 @@ export default function MetricsDashboard({ pollMs = 5000, maxPoints = 20 }) {
   const [paused, setPaused] = useState(false);
   const [intervalMs, setIntervalMs] = useState(pollMs);
 
-  // auto-upload toggle (dev-only visible)
-  const [autoUpload, setAutoUpload] = useState(false);
+  // auto-upload toggle (dev-only visible; backed by metricsUploader)
+  const [autoUpload, setAutoUpload] = useState(() => {
+    try {
+      if (typeof metricsUploader.getMetricsUploadState === 'function') {
+        return Boolean(metricsUploader.getMetricsUploadState().autoUploadEnabled);
+      }
+    } catch {}
+    return false;
+  });
+
+  // server upload status (for Phase 7 UI)
+  const [uploadState, setUploadState] = useState(() => {
+    try {
+      return typeof metricsUploader.getMetricsUploadState === 'function'
+        ? metricsUploader.getMetricsUploadState()
+        : null;
+    } catch {
+      return null;
+    }
+  });
 
   // Chart mount safety
   const [chartReady, setChartReady] = useState(false);
@@ -219,33 +255,15 @@ export default function MetricsDashboard({ pollMs = 5000, maxPoints = 20 }) {
     } catch {}
   }, []);
 
-  // Interval timer (respects pause + user-chosen interval + auto-upload)
+  // Interval timer (respects pause + user-chosen interval)
   useEffect(() => {
     if (paused) return;
 
     let cancelled = false;
 
-    const tick = async () => {
+    const tick = () => {
       if (cancelled) return;
-
-      if (
-        autoUpload &&
-        metricsUploader &&
-        typeof metricsUploader.flushQueuedMetrics === 'function'
-      ) {
-        try {
-          await metricsUploader.flushQueuedMetrics();
-        } catch (err) {
-          if (import.meta && import.meta.env && import.meta.env.DEV) {
-            // eslint-disable-next-line no-console
-            console.warn('[MetricsDashboard] auto-upload flush failed', err);
-          }
-        }
-      }
-
-      if (!cancelled) {
-        refresh();
-      }
+      refresh();
     };
 
     const id = setInterval(tick, intervalMs);
@@ -253,7 +271,28 @@ export default function MetricsDashboard({ pollMs = 5000, maxPoints = 20 }) {
       cancelled = true;
       clearInterval(id);
     };
-  }, [paused, intervalMs, refresh, autoUpload]);
+  }, [paused, intervalMs, refresh]);
+
+  // Poll upload state from metricsUploader for Phase 7 server-status UI
+  useEffect(() => {
+    let cancelled = false;
+
+    const id = window.setInterval(() => {
+      if (cancelled) return;
+      try {
+        if (typeof metricsUploader.getMetricsUploadState === 'function') {
+          setUploadState(metricsUploader.getMetricsUploadState());
+        }
+      } catch {
+        // ignore
+      }
+    }, 2000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, []);
 
   // Dev helpers + keyboard shortcuts
   useEffect(() => {
@@ -322,13 +361,17 @@ export default function MetricsDashboard({ pollMs = 5000, maxPoints = 20 }) {
 
   const pendingCount = useMemo(() => {
     try {
-      return typeof metricsUploader.getPendingCount === 'function'
-        ? metricsUploader.getPendingCount()
-        : 0;
+      if (typeof metricsUploader.getPendingMetricsCount === 'function') {
+        return metricsUploader.getPendingMetricsCount();
+      }
+      if (typeof metricsUploader.getPendingCount === 'function') {
+        return metricsUploader.getPendingCount();
+      }
+      return 0;
     } catch {
       return 0;
     }
-  }, [snapshot]);
+  }, [snapshot, uploadState]);
 
   const hasTrend = trend.length >= 3;
 
@@ -392,20 +435,53 @@ export default function MetricsDashboard({ pollMs = 5000, maxPoints = 20 }) {
 
   const uploadPending = useCallback(async () => {
     try {
-      if (!metricsUploader || typeof metricsUploader.flushQueuedMetrics !== 'function') return;
-      const res = await metricsUploader.flushQueuedMetrics();
+      if (!metricsUploader) return;
+
+      if (typeof metricsUploader.flushMetrics === 'function') {
+        await metricsUploader.flushMetrics({ reason: 'dashboard-button' });
+      } else if (typeof metricsUploader.flushQueuedMetrics === 'function') {
+        await metricsUploader.flushQueuedMetrics();
+      }
+
       if (import.meta && import.meta.env && import.meta.env.DEV) {
         // eslint-disable-next-line no-console
-        console.info('[MetricsDashboard] flushed metrics queue', res);
+        console.info('[MetricsDashboard] flushed metrics queue');
       }
       refresh();
     } catch (e) {
       if (import.meta && import.meta.env && import.meta.env.DEV) {
         // eslint-disable-next-line no-console
-        console.error('[MetricsDashboard] flushQueuedMetrics failed', e);
+        console.error('[MetricsDashboard] metrics flush failed', e);
       }
     }
   }, [refresh]);
+
+  // Derive status label from uploadState
+  let statusLabel = null;
+  let statusDetail = null;
+  let statusClass = 'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]';
+
+  if (uploadState) {
+    const { isUploading, lastUploadOk, lastUploadAt, lastUploadError } = uploadState;
+    const lastLabel = formatRelativeTime(lastUploadAt);
+
+    if (isUploading) {
+      statusLabel = 'Uploading…';
+    } else if (lastUploadOk === true) {
+      statusLabel = 'Last upload OK';
+    } else if (lastUploadOk === false) {
+      statusLabel = 'Upload error';
+    } else if (pendingCount > 0) {
+      statusLabel = 'Pending upload';
+    } else {
+      statusLabel = 'Idle';
+    }
+
+    statusDetail = `Last upload: ${lastLabel}`;
+    if (lastUploadError) {
+      statusDetail += ` • Error: ${lastUploadError}`;
+    }
+  }
 
   return (
     <div className="grid gap-4 px-3 pb-[env(safe-area-inset-bottom)]">
@@ -484,9 +560,21 @@ export default function MetricsDashboard({ pollMs = 5000, maxPoints = 20 }) {
           {import.meta && import.meta.env && import.meta.env.DEV && (
             <>
               <button
-                onClick={() => setAutoUpload(v => !v)}
+                onClick={() => {
+                  setAutoUpload((prev) => {
+                    const next = !prev;
+                    try {
+                      if (typeof metricsUploader.setAutoUploadEnabled === 'function') {
+                        metricsUploader.setAutoUploadEnabled(next);
+                      }
+                    } catch {
+                      // ignore
+                    }
+                    return next;
+                  });
+                }}
                 className="rounded-xl border border-gray-300 px-3 py-1.5 text-sm"
-                title="Toggle auto-upload of queued metrics on each refresh tick"
+                title="Toggle auto-upload of queued metrics in the uploader"
                 aria-pressed={autoUpload}
               >
                 {autoUpload ? 'Auto-Upload: On' : 'Auto-Upload: Off'}
@@ -506,6 +594,28 @@ export default function MetricsDashboard({ pollMs = 5000, maxPoints = 20 }) {
           )}
         </div>
       </div>
+
+      {/* Server upload status strip (Phase 7) */}
+      {uploadState && (
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-gray-600">
+          <div className="flex items-center gap-2">
+            <span className={statusClass}>
+              {statusLabel}
+            </span>
+            <span className="opacity-80">
+              {statusDetail}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]">
+              <span>Pending</span>
+              <span className="font-mono">
+                {pendingCount}
+              </span>
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* KPI cards */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
