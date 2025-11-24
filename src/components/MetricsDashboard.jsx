@@ -21,28 +21,11 @@ import {
   BarChart,
   Bar,
 } from 'recharts';
+import ServerUploadStatus from './metrics/ServerUploadStatus';
 
 function formatMs(val) {
   if (val == null || Number.isNaN(val)) return '—';
   return val < 10 ? `${val.toFixed(1)} ms` : `${Math.round(val)} ms`;
-}
-
-function formatRelativeTime(timestamp) {
-  if (!timestamp) return 'never';
-
-  const now = Date.now();
-  const deltaMs = now - timestamp;
-
-  if (deltaMs < 0) return 'just now';
-
-  const seconds = Math.floor(deltaMs / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
-
-  if (hours > 0) return `${hours}h ${minutes % 60}m ago`;
-  if (minutes > 0) return `${minutes}m ${seconds % 60}s ago`;
-  if (seconds > 5) return `${seconds}s ago`;
-  return 'just now';
 }
 
 function Stat({ label, value, subtle }) {
@@ -456,31 +439,33 @@ export default function MetricsDashboard({ pollMs = 5000, maxPoints = 20 }) {
     }
   }, [refresh]);
 
-  // Derive status label from uploadState
-  let statusLabel = null;
-  let statusDetail = null;
-  let statusClass = 'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]';
+  // Derive normalized upload status for ServerUploadStatus
+  let uploadStatus = 'idle';
+  let lastUploadAt = null;
+  let lastUploadError = null;
 
   if (uploadState) {
-    const { isUploading, lastUploadOk, lastUploadAt, lastUploadError } = uploadState;
-    const lastLabel = formatRelativeTime(lastUploadAt);
+    const {
+      isUploading,
+      lastUploadOk,
+      lastUploadAt: ts,
+      lastUploadError: err,
+    } = uploadState;
 
     if (isUploading) {
-      statusLabel = 'Uploading…';
+      uploadStatus = 'pending';
     } else if (lastUploadOk === true) {
-      statusLabel = 'Last upload OK';
+      uploadStatus = 'ok';
     } else if (lastUploadOk === false) {
-      statusLabel = 'Upload error';
+      uploadStatus = 'error';
     } else if (pendingCount > 0) {
-      statusLabel = 'Pending upload';
+      uploadStatus = 'pending';
     } else {
-      statusLabel = 'Idle';
+      uploadStatus = 'idle';
     }
 
-    statusDetail = `Last upload: ${lastLabel}`;
-    if (lastUploadError) {
-      statusDetail += ` • Error: ${lastUploadError}`;
-    }
+    lastUploadAt = ts ?? null;
+    lastUploadError = err ?? null;
   }
 
   return (
@@ -598,22 +583,12 @@ export default function MetricsDashboard({ pollMs = 5000, maxPoints = 20 }) {
       {/* Server upload status strip (Phase 7) */}
       {uploadState && (
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-gray-600">
-          <div className="flex items-center gap-2">
-            <span className={statusClass}>
-              {statusLabel}
-            </span>
-            <span className="opacity-80">
-              {statusDetail}
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]">
-              <span>Pending</span>
-              <span className="font-mono">
-                {pendingCount}
-              </span>
-            </span>
-          </div>
+          <ServerUploadStatus
+            status={uploadStatus}
+            pendingCount={pendingCount}
+            lastUploadAt={lastUploadAt}
+            lastErrorMessage={lastUploadError}
+          />
         </div>
       )}
 

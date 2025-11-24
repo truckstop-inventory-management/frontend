@@ -8,6 +8,12 @@ const QUEUE = [];
 let flushing = false;
 let lastFlushError = null;
 
+// Phase 7 upload state tracking (for UI)
+let autoUploadEnabled = false;
+let autoUploadTimerId = null;
+let lastUploadAt = null;
+let lastUploadOk = null;
+
 /** Enqueue events for later upload */
 export function postMetrics(eventOrEvents) {
   if (!eventOrEvents) return;
@@ -34,6 +40,10 @@ export function getPendingMetrics() {
 
 export function getPendingCount() {
   return QUEUE.length;
+}
+
+export function getPendingMetricsCount() {
+  return getPendingCount();
 }
 
 export function getLastFlushError() {
@@ -77,10 +87,17 @@ export async function flushQueuedMetrics(options = {}) {
     const sent = QUEUE.length;
     QUEUE.length = 0;
     flushing = false;
+
+    lastUploadAt = Date.now();
+    lastUploadOk = true;
+
     return { ok: true, sent };
   } catch (err) {
     lastFlushError = err;
     flushing = false;
+
+    lastUploadAt = Date.now();
+    lastUploadOk = false;
 
     // DEV-only console warning
     if (import.meta && import.meta.env && import.meta.env.DEV) {
@@ -88,6 +105,59 @@ export async function flushQueuedMetrics(options = {}) {
     }
 
     return { ok: false, error: err };
+  }
+}
+
+/**
+ * Convenience alias used by the dashboard. Keeps semantics identical to flushQueuedMetrics.
+ */
+export async function flushMetrics(options = {}) {
+  return flushQueuedMetrics(options);
+}
+
+/**
+ * Expose upload state for the Phase 7 dashboard.
+ */
+export function getMetricsUploadState() {
+  return {
+    isUploading: flushing,
+    lastUploadAt,
+    lastUploadOk,
+    lastUploadError: lastFlushError,
+    autoUploadEnabled,
+    pendingCount: getPendingCount(),
+  };
+}
+
+function ensureAutoUploadTimer() {
+  if (!autoUploadEnabled) return;
+  if (autoUploadTimerId != null) return;
+
+  autoUploadTimerId = setInterval(() => {
+    if (!autoUploadEnabled) return;
+    if (!QUEUE.length) return;
+
+    // fire-and-forget; errors are captured in lastFlushError
+    flushQueuedMetrics().catch(() => {});
+  }, 5000);
+}
+
+function clearAutoUploadTimer() {
+  if (autoUploadTimerId != null) {
+    clearInterval(autoUploadTimerId);
+    autoUploadTimerId = null;
+  }
+}
+
+/**
+ * Enable or disable auto-upload of queued metrics.
+ */
+export function setAutoUploadEnabled(enabled) {
+  autoUploadEnabled = Boolean(enabled);
+  if (autoUploadEnabled) {
+    ensureAutoUploadTimer();
+  } else {
+    clearAutoUploadTimer();
   }
 }
 
