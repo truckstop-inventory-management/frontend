@@ -88,9 +88,13 @@ export function ServerUploadStatus({
   const label = getStatusLabel();
   const timeAgo = toTimeAgo(lastUploadAt);
 
-  const showBadge = pendingCount > 0;
+  const safePending =
+    Number.isFinite(pendingCount) && !Number.isNaN(pendingCount)
+      ? Math.round(pendingCount)
+      : 0;
 
-  // 🔑 Safely stringify the error (prevents [object Error] React crash)
+  const showBadge = safePending > 0;
+
   const errorText =
     lastErrorMessage == null
       ? ""
@@ -167,9 +171,9 @@ export function ServerUploadStatus({
             >
               <span
                 className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-white/10 px-1 text-[0.65rem]"
-                aria-label={`${pendingCount} pending uploads`}
+                aria-label={`${safePending} pending uploads`}
               >
-                {pendingCount}
+                {safePending}
               </span>
               <span className="uppercase tracking-wide">Pending</span>
             </motion.div>
@@ -182,7 +186,7 @@ export function ServerUploadStatus({
         {showError && (
           <motion.p
             key="error-line"
-            className="max-w-xs text-[0.7rem] sm:text-xs text-rose-700"
+            className="max-w-[240px] text-[0.7rem] sm:text-xs text-rose-700"
             initial={{ opacity: 0, y: 2 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 2 }}
